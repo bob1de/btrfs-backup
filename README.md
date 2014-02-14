@@ -15,7 +15,7 @@ Sample usage
 
 (as root)
 
-\# btrfs-backup.py /home /backup
+    \# btrfs-backup.py /home /backup
 
 This will create a read-only snapshot in /home/snapshot/YYMMDD-HHMMSS,
 and then send it to /backup/YYMMDD-HHMMSS. On future runs, it will
@@ -32,8 +32,8 @@ destination.  For example, you might want to backup both / and /home.
 The main caveat is you'll want to put the backups in separate folders
 on the destination drive to avoid confusion.
 
-\# btrfs-backup.py / /backup/root
-\# btrfs-backup.py /home /backup/home
+    \# btrfs-backup.py / /backup/root
+    \# btrfs-backup.py /home /backup/home
 
 You can specify the flag --latest-only to only keep the most recent
 snapshot on the source filesystem.
@@ -43,8 +43,8 @@ Backing up regularly
 
 With anacron on Debian, I simply added a file /etc/cron.daily/local-backup:
 
-\#!/bin/sh
-ionice -c 3 /home /backup/home
+    \#!/bin/sh
+    ionice -c 3 /home /backup/home
 
 More or less frequent backups could be made using other cron.* scripts.
 
@@ -53,17 +53,17 @@ Restoring a snapshot
 
 If necessary, you can restore a whole snapshot by using e.g.
 
-\# mkdir /home/snapshot
-\# btrfs send /backup/YYMMDD-HHMMSS | btrfs receive /home/snapshot
+    \# mkdir /home/snapshot
+    \# btrfs send /backup/YYMMDD-HHMMSS | btrfs receive /home/snapshot
 
 To use this as the base for future incremental backups:
 
-\# ln -s /home/snapshot/YYMMDD-HHMMSS /home/snapshot/.latest 
+    \# ln -s /home/snapshot/YYMMDD-HHMMSS /home/snapshot/.latest 
 
 Then you need to take the read-only snapshot and turn it back into a
 root filesystem:
 
-\# cp -aR --reflink /home/snapshot/YYMMDD-HHMMSS /home
+    \# cp -aR --reflink /home/snapshot/YYMMDD-HHMMSS /home
 
 Caveat
 ======
