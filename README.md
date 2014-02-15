@@ -44,7 +44,7 @@ Backing up regularly
 With anacron on Debian, I simply added a file /etc/cron.daily/local-backup:
 
     #!/bin/sh
-    ionice -c 3 /home /backup/home
+    ionice -c 3 /path/to/btrfs-backup.py /home /backup/home
 
 More or less frequent backups could be made using other cron.* scripts.
 
@@ -56,14 +56,14 @@ If necessary, you can restore a whole snapshot by using e.g.
     # mkdir /home/snapshot
     # btrfs send /backup/YYMMDD-HHMMSS | btrfs receive /home/snapshot
 
-To use this as the base for future incremental backups:
-
-    # ln -s /home/snapshot/YYMMDD-HHMMSS /home/snapshot/.latest 
-
 Then you need to take the read-only snapshot and turn it back into a
 root filesystem:
 
     # cp -aR --reflink /home/snapshot/YYMMDD-HHMMSS /home
+
+You might instead have some luck taking the restored snapshot and turning it
+into a read-write snapshot, and then re-pivoting your mounted
+subvolume to the read-write snapshot.
 
 Caveat
 ======
