@@ -71,7 +71,7 @@ def send_snapshot(srcloc, destloc, prevsnapshot=None, debug=False):
 
     srccmd = ['btrfs', 'send'] + flags
     if prevsnapshot:
-        srccmd += ['-c', prevsnapshot]
+        srccmd += ['-p', prevsnapshot]
     srccmd += [srcloc]
 
     destcmd = ['btrfs', 'receive'] + flags + [destloc]
