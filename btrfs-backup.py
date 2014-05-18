@@ -117,7 +117,7 @@ if os.path.exists(real_latest):
           'to', backuploc, 'using base', real_latest, file=sys.stderr)
     send_snapshot(sourcesnap, backuploc, real_latest, debug=args.debug)
     if args.latest_only:
-        print('removing old snapshot', real_latest, file=stderr)
+        print('removing old snapshot', real_latest, file=sys.stderr)
         delete_snapshot(real_latest)
 else:
     print('snapshot successful; sending backup from', sourcesnap,
