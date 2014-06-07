@@ -89,6 +89,8 @@ def send_snapshot(srcloc, destloc, prevsnapshot=None, debug=False):
     pipe = subprocess.Popen(srccmd, stdout=subprocess.PIPE)
     output = subprocess.check_output(destcmd, stdin=pipe.stdout)
     pipe.wait()
+    #print(pipe.returncode, file=sys.stderr)
+    return pipe.returncode
 
 def delete_snapshot(snaploc):
     subprocess.check_output(('btrfs', 'subvolume', 'delete', snaploc))
