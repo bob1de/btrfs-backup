@@ -31,20 +31,27 @@ import os
 import time
 import argparse
 
-SNAPSHOTDIR = 'snapshot'
-LASTNAME = os.path.join(SNAPSHOTDIR, '.latest')
-
 parser = argparse.ArgumentParser(description="incremental btrfs backup")
 parser.add_argument('--latest-only', action='store_true',
                     help="only keep latest snapshot on source filesystem")
 parser.add_argument('-d', '--debug', action='store_true',
                     help="enable btrfs debugging on send/receive")
+parser.add_argument('--snapshot-folder',
+                    help="snapshot folder in source filesystem")
 parser.add_argument('source', help="filesystem to backup")
 parser.add_argument('backup', help="destination to send backups to")
 args = parser.parse_args()
 
 sourceloc = args.source
 backuploc = args.backup
+
+if args.snapshot_folder:
+    SNAPSHOTDIR = args.snapshot_folder
+else:
+    SNAPSHOTDIR = 'snapshot'
+
+LASTNAME = os.path.join(SNAPSHOTDIR, '.latest')
+
 
 def datestr(timestamp=None):
     if timestamp is None:
@@ -85,7 +92,7 @@ def send_snapshot(srcloc, destloc, prevsnapshot=None, debug=False):
 
 def delete_snapshot(snaploc):
     subprocess.check_output(('btrfs', 'subvolume', 'delete', snaploc))
-    
+
 # Ensure snapshot directory exists
 snapdir = os.path.join(sourceloc, SNAPSHOTDIR)
 if not os.path.exists(snapdir):
@@ -110,7 +117,7 @@ if os.path.exists(real_latest):
           'to', backuploc, 'using base', real_latest, file=sys.stderr)
     send_snapshot(sourcesnap, backuploc, real_latest, debug=args.debug)
     if args.latest_only:
-        print('removing old snapshot', real_latest, file=stderr)
+        print('removing old snapshot', real_latest, file=sys.stderr)
         delete_snapshot(real_latest)
 else:
     print('snapshot successful; sending backup from', sourcesnap,
@@ -121,7 +128,7 @@ if os.path.islink(latest):
     os.unlink(latest)
 elif os.path.exists(latest):
     print('confusion:', latest, "should be a symlink", file=sys.stderr)
-        
+
 # Make .latest point to this backup
 print('new snapshot at', sourcesnap, file=sys.stderr)
 os.symlink(sourcesnap, latest)
