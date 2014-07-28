@@ -48,7 +48,7 @@ backuploc = args.backup
 if args.snapshot_folder:
     SNAPSHOTDIR = args.snapshot_folder
 else:
-    SNAPSHOTDIR = 'snapshot'
+    SNAPSHOTDIR = '.snapshot'
 
 LASTNAME = os.path.join(SNAPSHOTDIR, '.latest')
 
@@ -83,8 +83,8 @@ def send_snapshot(srcloc, destloc, prevsnapshot=None, debug=False):
 
     destcmd = ['btrfs', 'receive'] + flags + [destloc]
 
-    #print(srccmd)
-    #print(destcmd)
+    print(srccmd)
+    print(destcmd)
 
     pipe = subprocess.Popen(srccmd, stdout=subprocess.PIPE)
     output = subprocess.check_output(destcmd, stdin=pipe.stdout)
