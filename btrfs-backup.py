@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 
-# Backup a btrfs volume to another, incrementally
+# Backup btrfs volume(s) to another, incrementally
 # Requires Python >= 3.3, btrfs-progs >= 3.12 most likely.
 
+# Modifications Copyright (c) 2014 Klaus Holler <kho@gmx.at>
 # Copyright (c) 2014 Chris Lawrence <lawrencc@debian.org>
 #
 # Permission is hereby granted, free of charge, to any person
@@ -31,36 +32,50 @@ import os
 import time
 import argparse
 
-parser = argparse.ArgumentParser(description="incremental btrfs backup")
+start_time = time.localtime()
+print("btrfs-backup started at %s." % time.asctime(start_time))
+
+source_to_snapshot = list()     # for every source remember corresponding snapshot_folder
+class SourceArgAction(argparse.Action):
+    def __call__(self, parser, namespace, values, option_string=None):
+        #print('%r %r %r %r' % (namespace, values, option_string, namespace.snapshot_folder))
+        tup = (values, namespace.snapshot_folder)
+        source_to_snapshot.append(tup)
+
+parser = argparse.ArgumentParser(description="incremental btrfs backup (for multiple "
+                                 " partitions, naming snapshots created together with the "
+                                 " same base datetime stamp)")
 parser.add_argument('--latest-only', action='store_true',
                     help="only keep latest snapshot on source filesystem")
 parser.add_argument('-d', '--debug', action='store_true',
                     help="enable btrfs debugging on send/receive")
-parser.add_argument('--snapshot-folder',
+parser.add_argument('--snapshot-folder', action='store', default=".snapshot", 
                     help="snapshot folder in source filesystem")
-parser.add_argument('source', help="filesystem to backup")
-parser.add_argument('backup', help="destination to send backups to")
+parser.add_argument('-t', '--trial', action='store_true',
+		    help="trial run: only show commands that would be executed, but don't run anything")
+# can be used multiple times e.g. -source /boot -source /mnt/@ -source /mnt/@home
+parser.add_argument('-s', '--source', action=SourceArgAction, help="filesystem(s) to backup")
+parser.add_argument('-b', '--backup', help="destination to send backups to")
 args = parser.parse_args()
 
-sourceloc = args.source
 backuploc = args.backup
+trial = args.trial
 
-if args.snapshot_folder:
-    SNAPSHOTDIR = args.snapshot_folder
-else:
-    SNAPSHOTDIR = '.snapshot'
+print(" SOURCES: ", source_to_snapshot)
 
-LASTNAME = os.path.join(SNAPSHOTDIR, '.latest')
-
+if trial:
+    print("Trial run requested: only show commands that would be executed, but don't run anything")
 
 def datestr(timestamp=None):
     if timestamp is None:
         timestamp = time.localtime()
     return time.strftime('%Y%m%d-%H%M%S', timestamp)
 
-def new_snapshot(disk, snapshotdir, readonly=True):
-    snaploc = os.path.join(snapshotdir, datestr())
+def new_snapshot(disk, snapshotdir, timestamp=start_time, readonly=True, trial=False):
+    snaploc = os.path.join(snapshotdir, datestr(timestamp) + '-' + os.path.basename(disk))
     command = ['btrfs', 'subvolume', 'snapshot']
+    if trial:
+        command.insert(0, 'echo')
     if readonly:
         command += ['-r']
     command += [disk, snaploc]
@@ -68,23 +83,30 @@ def new_snapshot(disk, snapshotdir, readonly=True):
     subprocess.check_call(command)
     if os.path.exists(snaploc):
         return snaploc
-    return None
+    if trial:
+        return snaploc  # fake success
+    else:
+        return None
 
-def send_snapshot(srcloc, destloc, prevsnapshot=None, debug=False):
+def send_snapshot(srcloc, destloc, prevsnapshot=None, debug=False, trial=False):
     if debug:
         flags = ['-vv']
     else:
         flags = []
 
     srccmd = ['btrfs', 'send'] + flags
+    if trial:
+        srccmd.insert(0, 'echo')
     if prevsnapshot:
         srccmd += ['-p', prevsnapshot]
     srccmd += [srcloc]
 
     destcmd = ['btrfs', 'receive'] + flags + [destloc]
+    if trial:
+        destcmd.insert(0, 'echo')
 
-    print(srccmd)
-    print(destcmd)
+    print("  ", srccmd)
+    print("  ", destcmd)
 
     pipe = subprocess.Popen(srccmd, stdout=subprocess.PIPE)
     output = subprocess.check_output(destcmd, stdin=pipe.stdout)
@@ -93,45 +115,81 @@ def send_snapshot(srcloc, destloc, prevsnapshot=None, debug=False):
     return pipe.returncode
 
 def delete_snapshot(snaploc):
-    subprocess.check_output(('btrfs', 'subvolume', 'delete', snaploc))
+    delcmd = ['btrfs', 'subvolume', 'delete', snaploc]
+    if trial:
+        delcmd.insert(0, 'echo')
+    subprocess.check_output(delcmd)
 
-# Ensure snapshot directory exists
-snapdir = os.path.join(sourceloc, SNAPSHOTDIR)
-if not os.path.exists(snapdir):
-    os.mkdir(snapdir)
 
-# First we need to create a new snapshot on the source disk
-sourcesnap = new_snapshot(sourceloc, snapdir)
+# First we need to create a new snapshot on the source disk(s) for all sources
+snapshots_to_backup = list()
+problems = list()
+for (sourceloc, snapdir) in source_to_snapshot:
+    # Ensure snapshot directory exists
+    if not os.path.exists(snapdir):
+        problems.append("Snapshot base path %r for source %r does not exist, source skipped." % \
+            (snapdir, sourceloc))
+        continue
+    sourcesnap = new_snapshot(sourceloc, snapdir)
+    if not sourcesnap:
+        problems.append("snapshot for %r to %r failed" % (sourceloc, snapdir))
+    else:
+        snapshots_to_backup.append((sourceloc, sourcesnap, snapdir))
 
-if not sourcesnap:
-    print("snapshot failed", file=sys.stderr)
-    sys.exit(1)
+if len(problems) > 0:
+    if trial: 
+        print("Trial: ignoring problems encountered while creating snapshots:\n * " + \
+              "\n * ".join(problems), file=sys.stderr)
+    else:
+        print("Problems encountered while creating snapshots:\n * " + \
+              "\n * ".join(problems), file=sys.stderr)
+        sys.exit(1)
 
 # Need to sync
-subprocess.check_call(['sync'])
+synccmd = ['sync']
+if trial:
+    synccmd.insert(0, 'echo')
+subprocess.check_call(synccmd)
+print('Creating snapshot(s) was successful.', file=sys.stderr)
+print('Going to send them to', backuploc, '...', file=sys.stderr)
+# Now we need to send the snapshot (incrementally, if possible), but only those
+# that did not have problems before
+for (sourceloc, sourcesnap, snapdir) in snapshots_to_backup:
+    latest = os.path.join(snapdir, '.latest-' + os.path.basename(sourceloc))
+    real_latest = os.path.realpath(latest)
+    if trial:
+        print("trial: searching realpath of latest symlink %r for source %r" % (latest, sourceloc))
+    else:
+        print("searching realpath of latest symlink %r for source %r" % (real_latest, sourceloc))
+    if os.path.exists(real_latest):
+        print('sending incremental backup from', sourcesnap,
+            'to', backuploc, 'using base', real_latest, file=sys.stderr)
+        send_snapshot(sourcesnap, backuploc, real_latest, debug=args.debug)
+        if args.latest_only:
+            print('removing old snapshot', real_latest, file=sys.stderr)
+            delete_snapshot(real_latest)
+    else:
+        print('initial snapshot successful; sending full backup from', sourcesnap,
+            'to', backuploc, file=sys.stderr)
+        send_snapshot(sourcesnap, backuploc, debug=args.debug)
+    if trial:
+        print("trial: would change latest link %r to point to %r" % (latest, sourcesnap))
+    else:
+        print("changing latest link %r to point to %r" % (latest, sourcesnap))
+        if os.path.islink(latest):
+            print("unlinking %r" % latest)
+            #os.unlink(latest)
+        elif os.path.exists(latest):
+            problems.append('confusion:', latest, "should be a symlink but is not")
+            continue
+        # Make .latest point to this backup
+        print('New snapshot', sourcesnap, 'created (this is now latest', latest, ').',
+              file=sys.stderr)
+        #os.symlink(sourcesnap, latest)
 
-# Now we need to send the snapshot (incrementally, if possible)
-latest = os.path.join(sourceloc, LASTNAME)
-real_latest = os.path.realpath(latest)
-
-if os.path.exists(real_latest):
-    print('snapshot successful; sending incremental backup from', sourcesnap,
-          'to', backuploc, 'using base', real_latest, file=sys.stderr)
-    send_snapshot(sourcesnap, backuploc, real_latest, debug=args.debug)
-    if args.latest_only:
-        print('removing old snapshot', real_latest, file=sys.stderr)
-        delete_snapshot(real_latest)
-else:
-    print('snapshot successful; sending backup from', sourcesnap,
-          'to', backuploc, file=sys.stderr)
-    send_snapshot(sourcesnap, backuploc, debug=args.debug)
-
-if os.path.islink(latest):
-    os.unlink(latest)
-elif os.path.exists(latest):
-    print('confusion:', latest, "should be a symlink", file=sys.stderr)
-
-# Make .latest point to this backup
-print('new snapshot at', sourcesnap, file=sys.stderr)
-os.symlink(sourcesnap, latest)
-print('backup complete', file=sys.stderr)
+if len(problems) > 0:
+    print("Problem summary:\n * " + "\n * ".join(problems) + 
+          "\nBackup might be incomplete.", file=sys.stderr)
+    sys.exit(1) # indicate failure
+print('Backup complete.', file=sys.stderr)
+sys.exit(0)     # indicate success
