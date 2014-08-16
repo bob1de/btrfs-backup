@@ -182,14 +182,14 @@ for (sourceloc, sourcesnap, snapdir) in snapshots_to_backup:
         print("changing latest link %r to point to %r" % (latest, sourcesnap))
         if os.path.islink(latest):
             print("unlinking %r" % latest)
-            #os.unlink(latest)
+            os.unlink(latest)
         elif os.path.exists(latest):
             problems.append('confusion:', latest, "should be a symlink but is not")
             continue
         # Make .latest point to this backup
         print('New snapshot', sourcesnap, 'created (this is now latest', latest, ').',
               file=sys.stderr)
-        #os.symlink(sourcesnap, latest)
+        os.symlink(sourcesnap, latest)
 
 if len(problems) > 0:
     print("Problem summary:\n * " + "\n * ".join(problems) + 
