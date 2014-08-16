@@ -130,7 +130,7 @@ for (sourceloc, snapdir) in source_to_snapshot:
         problems.append("Snapshot base path %r for source %r does not exist, source skipped." % \
             (snapdir, sourceloc))
         continue
-    sourcesnap = new_snapshot(sourceloc, snapdir)
+    sourcesnap = new_snapshot(sourceloc, snapdir, trial=trial)
     if not sourcesnap:
         problems.append("snapshot for %r to %r failed" % (sourceloc, snapdir))
     else:
@@ -168,14 +168,14 @@ for (sourceloc, sourcesnap, snapdir) in snapshots_to_backup:
     if os.path.exists(real_latest):
         print('sending incremental backup from', sourcesnap,
             'to', backuploc, 'using base', real_latest, file=sys.stderr)
-        send_snapshot(sourcesnap, backuploc, real_latest, debug=args.debug)
+        send_snapshot(sourcesnap, backuploc, real_latest, debug=args.debug, trial=trial)
         if args.latest_only:
             print('removing old snapshot', real_latest, file=sys.stderr)
             delete_snapshot(real_latest)
     else:
         print('initial snapshot successful; sending full backup from', sourcesnap,
             'to', backuploc, file=sys.stderr)
-        send_snapshot(sourcesnap, backuploc, debug=args.debug)
+        send_snapshot(sourcesnap, backuploc, debug=args.debug, trial=trial)
     if trial:
         print("trial: would change latest link %r to point to %r" % (latest, sourcesnap))
     else:
