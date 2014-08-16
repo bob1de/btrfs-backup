@@ -56,12 +56,23 @@ parser.add_argument('-t', '--trial', action='store_true',
 # can be used multiple times e.g. -source /boot -source /mnt/@ -source /mnt/@home
 parser.add_argument('-s', '--source', action=SourceArgAction, help="filesystem(s) to backup")
 parser.add_argument('-b', '--backup', help="destination to send backups to")
+parser.add_argument('-c', '--destination_command', help="command to run at destination host, defaults to ['btrfs', 'receive']", default=['btrfs', 'receive'])
 args = parser.parse_args()
 
 backuploc = args.backup
 trial = args.trial
+if type(args.destination_command) == "<class 'list'>":
+    destination_cmd = args.destination_command
+elif type(args.destination_command) == type('str'):
+    if args.destination_command.startswith('['):
+        destination_cmd = eval(args.destination_command)
+    else:
+        destination_cmd = [args.destination_command]
+else:
+    raise Exception('Sorry, but type %s of destination_command is currently not supported' % type(args.destination_command))
 
 print(" SOURCES: ", source_to_snapshot)
+print(" destination_command: ", destination_cmd)
 
 if trial:
     print("Trial run requested: only show commands that would be executed, but don't run anything")
@@ -88,7 +99,8 @@ def new_snapshot(disk, snapshotdir, timestamp=start_time, readonly=True, trial=F
     else:
         return None
 
-def send_snapshot(srcloc, destloc, prevsnapshot=None, debug=False, trial=False):
+def send_snapshot(srcloc, destloc, prevsnapshot=None, debug=False, trial=False,
+                  destination_cmd=['btrfs', 'receive']):
     if debug:
         flags = ['-vv']
     else:
@@ -101,7 +113,8 @@ def send_snapshot(srcloc, destloc, prevsnapshot=None, debug=False, trial=False):
         srccmd += ['-p', prevsnapshot]
     srccmd += [srcloc]
 
-    destcmd = ['btrfs', 'receive'] + flags + [destloc]
+    print("type of destination_cmd: ", type(destination_cmd))
+    destcmd = destination_cmd + flags + [destloc]
     if trial:
         destcmd.insert(0, 'echo')
 
@@ -168,14 +181,16 @@ for (sourceloc, sourcesnap, snapdir) in snapshots_to_backup:
     if os.path.exists(real_latest):
         print('sending incremental backup from', sourcesnap,
             'to', backuploc, 'using base', real_latest, file=sys.stderr)
-        send_snapshot(sourcesnap, backuploc, real_latest, debug=args.debug, trial=trial)
+        send_snapshot(sourcesnap, backuploc, real_latest, debug=args.debug, trial=trial,
+                      destination_cmd=destination_cmd)
         if args.latest_only:
             print('removing old snapshot', real_latest, file=sys.stderr)
             delete_snapshot(real_latest)
     else:
         print('initial snapshot successful; sending full backup from', sourcesnap,
             'to', backuploc, file=sys.stderr)
-        send_snapshot(sourcesnap, backuploc, debug=args.debug, trial=trial)
+        send_snapshot(sourcesnap, backuploc, debug=args.debug, trial=trial,
+                      destination_cmd=destination_cmd)
     if trial:
         print("trial: would change latest link %r to point to %r" % (latest, sourcesnap))
     else:
