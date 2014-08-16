@@ -151,6 +151,10 @@ if trial:
     synccmd.insert(0, 'echo')
 subprocess.check_call(synccmd)
 print('Creating snapshot(s) was successful.', file=sys.stderr)
+if backuploc is None:
+    print('No backup location specified, stopping now after creating snapshots.', file=sys.stderr)
+    sys.exit(0)
+
 print('Going to send them to', backuploc, '...', file=sys.stderr)
 # Now we need to send the snapshot (incrementally, if possible), but only those
 # that did not have problems before
