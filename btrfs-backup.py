@@ -55,24 +55,27 @@ parser.add_argument('-t', '--trial', action='store_true',
 		    help="trial run: only show commands that would be executed, but don't run anything")
 # can be used multiple times e.g. -source /boot -source /mnt/@ -source /mnt/@home
 parser.add_argument('-s', '--source', action=SourceArgAction, help="filesystem(s) to backup")
-parser.add_argument('-b', '--backup', help="destination to send backups to")
-parser.add_argument('-c', '--destination_command', help="command to run at destination host, defaults to ['btrfs', 'receive']", default=['btrfs', 'receive'])
+parser.add_argument('-b', '--backup', help="(local) destination directory to send backups to")
+parser.add_argument('-r', '--remote_backup', help="command to connect/run at destination host, using %DEST% as placeholder for destination snapshot filename (if needed)")
+parser.add_argument('-T', '--targetname', help="name of backup target, useful for creating multiple symlinks that point to the last backed up snapshot per target")
 args = parser.parse_args()
 
 backuploc = args.backup
 trial = args.trial
-if type(args.destination_command) == "<class 'list'>":
-    destination_cmd = args.destination_command
-elif type(args.destination_command) == type('str'):
-    if args.destination_command.startswith('['):
-        destination_cmd = eval(args.destination_command)
+targetname = args.targetname
+if type(args.remote_backup) == "<class 'list'>":
+    remote_backup_command = args.remote_backup
+elif type(args.remote_backup) == type('str'):
+    if args.remote_backup.startswith('['):
+        remote_backup_command = eval(args.remote_backup)
     else:
-        destination_cmd = [args.destination_command]
+        remote_backup_command = [args.remote_backup]
 else:
-    raise Exception('Sorry, but type %s of destination_command is currently not supported' % type(args.destination_command))
+    raise Exception('Sorry, but type %s of remote_backup is currently not supported' % type(args.remote_backup))
 
 print(" SOURCES: ", source_to_snapshot)
-print(" destination_command: ", destination_cmd)
+if remote_backup_command is not None:
+    print(" remote_backup command: ", remote_backup_command)
 
 if trial:
     print("Trial run requested: only show commands that would be executed, but don't run anything")
@@ -100,7 +103,7 @@ def new_snapshot(disk, snapshotdir, timestamp=start_time, readonly=True, trial=F
         return None
 
 def send_snapshot(srcloc, destloc, prevsnapshot=None, debug=False, trial=False,
-                  destination_cmd=['btrfs', 'receive']):
+                  remote_backup_command=None):
     if debug:
         flags = ['-vv']
     else:
@@ -113,8 +116,11 @@ def send_snapshot(srcloc, destloc, prevsnapshot=None, debug=False, trial=False,
         srccmd += ['-p', prevsnapshot]
     srccmd += [srcloc]
 
-    print("type of destination_cmd: ", type(destination_cmd))
-    destcmd = destination_cmd + flags + [destloc]
+    if remote_backup_command is not None:
+        # custom remote backup command instead of normal btrfs receive %DEST%
+        destcmd = [it.replace("%DEST%", os.path.basename(srcloc)) for it in remote_backup_command]
+    else:
+        destcmd = ['btrfs', 'receive'] + flags + [destloc]
     if trial:
         destcmd.insert(0, 'echo')
 
@@ -164,15 +170,23 @@ if trial:
     synccmd.insert(0, 'echo')
 subprocess.check_call(synccmd)
 print('Creating snapshot(s) was successful.', file=sys.stderr)
-if backuploc is None:
-    print('No backup location specified, stopping now after creating snapshots.', file=sys.stderr)
+if (backuploc is None) and (remote_backup_command is None):
+    print('Neither local backup location nor remote backup command specified, stopping now after creating snapshots.', file=sys.stderr)
     sys.exit(0)
 
-print('Going to send them to', backuploc, '...', file=sys.stderr)
+if backuploc is None:
+    print('Going to send them via remote backup command:', " ".join(remote_backup_command), 
+          '...', file=sys.stderr)
+    if targetname is None:
+        targetname = 'remote'
+else:
+    print('Going to send them to', backuploc, '...', file=sys.stderr)
+    if targetname is None:
+        targetname = 'local'
 # Now we need to send the snapshot (incrementally, if possible), but only those
 # that did not have problems before
 for (sourceloc, sourcesnap, snapdir) in snapshots_to_backup:
-    latest = os.path.join(snapdir, '.latest-' + os.path.basename(sourceloc))
+    latest = os.path.join(snapdir, '.latest.' + targetname + '.' + os.path.basename(sourceloc))
     real_latest = os.path.realpath(latest)
     if trial:
         print("trial: searching realpath of latest symlink %r for source %r" % (latest, sourceloc))
@@ -182,7 +196,7 @@ for (sourceloc, sourcesnap, snapdir) in snapshots_to_backup:
         print('sending incremental backup from', sourcesnap,
             'to', backuploc, 'using base', real_latest, file=sys.stderr)
         send_snapshot(sourcesnap, backuploc, real_latest, debug=args.debug, trial=trial,
-                      destination_cmd=destination_cmd)
+                      remote_backup_command=remote_backup_command)
         if args.latest_only:
             print('removing old snapshot', real_latest, file=sys.stderr)
             delete_snapshot(real_latest)
@@ -190,7 +204,7 @@ for (sourceloc, sourcesnap, snapdir) in snapshots_to_backup:
         print('initial snapshot successful; sending full backup from', sourcesnap,
             'to', backuploc, file=sys.stderr)
         send_snapshot(sourcesnap, backuploc, debug=args.debug, trial=trial,
-                      destination_cmd=destination_cmd)
+                      remote_backup_command=remote_backup_command)
     if trial:
         print("trial: would change latest link %r to point to %r" % (latest, sourcesnap))
     else:
