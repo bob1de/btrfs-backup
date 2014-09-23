@@ -31,27 +31,7 @@ import os
 import time
 import argparse
 
-parser = argparse.ArgumentParser(description="incremental btrfs backup")
-parser.add_argument('--latest-only', action='store_true',
-                    help="only keep latest snapshot on source filesystem")
-parser.add_argument('-d', '--debug', action='store_true',
-                    help="enable btrfs debugging on send/receive")
-parser.add_argument('--snapshot-folder',
-                    help="snapshot folder in source filesystem")
-parser.add_argument('source', help="filesystem to backup")
-parser.add_argument('backup', help="destination to send backups to")
-args = parser.parse_args()
-
-sourceloc = args.source
-backuploc = args.backup
-
-if args.snapshot_folder:
-    SNAPSHOTDIR = args.snapshot_folder
-else:
-    SNAPSHOTDIR = 'snapshot'
-
-LASTNAME = os.path.join(SNAPSHOTDIR, '.latest')
-
+####################################################################
 
 def datestr(timestamp=None):
     if timestamp is None:
@@ -65,10 +45,12 @@ def new_snapshot(disk, snapshotdir, readonly=True):
         command += ['-r']
     command += [disk, snaploc]
 
-    subprocess.check_call(command)
-    if os.path.exists(snaploc):
+    try:
+        subprocess.check_call(command)
         return snaploc
-    return None
+    except CalledProcessError:
+        print("Error on command: " + str(command))
+        return None    
 
 def send_snapshot(srcloc, destloc, prevsnapshot=None, debug=False):
     if debug:
@@ -92,46 +74,139 @@ def send_snapshot(srcloc, destloc, prevsnapshot=None, debug=False):
     #print(pipe.returncode, file=sys.stderr)
     return pipe.returncode
 
+def find_old_backup(bak_dir_time_objs,recurse_val = 0):
+    """ Find oldest time object in "bak_dir_time_objs" structure.
+        recurse_val = 0 -> start with top entry "year", default
+    """
+    
+    tmp = []
+    for timeobj in bak_dir_time_objs:
+        tmp.append(timeobj[recurse_val])
+    
+    min_val = min(tmp) # find minimum time value
+    new_timeobj = []
+
+    for timeobj in bak_dir_time_objs:
+        if(timeobj[recurse_val] == min_val):
+            new_timeobj.append(timeobj)
+    
+    if (len(new_timeobj) > 1):
+        return find_old_backup(new_timeobj,recurse_val+1) # recursive call from year to minute
+    else:        
+        return new_timeobj[0]
+
+def delete_old_backups(backuploc, max_num_backups):
+    """ Delete old backup directories in backup target folder based on their date.
+        Warning: This function will delete btrfs snapshots in target folder based on the parameter
+        max_num_backups!
+    """   
+    
+    # recurse target backup folder until "max_num_backups" is reached
+    cur_num_backups = len(os.listdir(backuploc))
+    for i in range(cur_num_backups - max_num_backups):
+        
+        # find all backup snapshots in directory and build time object list
+        bak_dir_time_objs = []
+        for directory in os.listdir(backuploc):
+            bak_dir_time_objs.append(time.strptime(directory, '%Y%m%d-%H%M%S'))
+        
+        # find oldest directory object and mark to remove
+        bak_dir_to_remove = datestr(find_old_backup(bak_dir_time_objs, 0))
+        bak_dir_to_remove_path = os.path.join(backuploc, bak_dir_to_remove)
+        print ("Removing old backup dir " + bak_dir_to_remove_path)
+        
+        # delete snapshot of oldest backup snapshot
+        delete_snapshot(bak_dir_to_remove_path)
+
 def delete_snapshot(snaploc):
     subprocess.check_output(('btrfs', 'subvolume', 'delete', snaploc))
 
-# Ensure snapshot directory exists
-snapdir = os.path.join(sourceloc, SNAPSHOTDIR)
-if not os.path.exists(snapdir):
-    os.mkdir(snapdir)
+####################################################################
 
-# First we need to create a new snapshot on the source disk
-sourcesnap = new_snapshot(sourceloc, snapdir)
+if __name__ == "__main__":
 
-if not sourcesnap:
-    print("snapshot failed", file=sys.stderr)
-    sys.exit(1)
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description="incremental btrfs backup")
+    parser.add_argument('--latest-only', action='store_true',
+                        help="only keep latest snapshot on source filesystem")
+    parser.add_argument('-d', '--debug', action='store_true',
+                        help="enable btrfs debugging on send/receive")
+    parser.add_argument('--num-backups', type=int, default=0,
+                        help="only store given number of backups in backup folder")
+    parser.add_argument('--snapshot-folder',
+                        help="snapshot folder in source filesystem")
+    parser.add_argument('source', help="filesystem to backup")
+    parser.add_argument('backup', help="destination to send backups to")
+    args = parser.parse_args()
 
-# Need to sync
-subprocess.check_call(['sync'])
+    sourceloc = args.source
+    backuploc = args.backup
 
-# Now we need to send the snapshot (incrementally, if possible)
-latest = os.path.join(sourceloc, LASTNAME)
-real_latest = os.path.realpath(latest)
+    NUM_BACKUPS = args.num_backups
+    print("Num backups: " + str(NUM_BACKUPS))
 
-if os.path.exists(real_latest):
-    print('snapshot successful; sending incremental backup from', sourcesnap,
-          'to', backuploc, 'using base', real_latest, file=sys.stderr)
-    send_snapshot(sourcesnap, backuploc, real_latest, debug=args.debug)
-    if args.latest_only:
-        print('removing old snapshot', real_latest, file=sys.stderr)
-        delete_snapshot(real_latest)
-else:
-    print('snapshot successful; sending backup from', sourcesnap,
-          'to', backuploc, file=sys.stderr)
-    send_snapshot(sourcesnap, backuploc, debug=args.debug)
+    if args.snapshot_folder:
+        SNAPSHOTDIR = args.snapshot_folder
+    else:
+        SNAPSHOTDIR = 'snapshot'
 
-if os.path.islink(latest):
-    os.unlink(latest)
-elif os.path.exists(latest):
-    print('confusion:', latest, "should be a symlink", file=sys.stderr)
+    LASTNAME = os.path.join(SNAPSHOTDIR, '.latest')
 
-# Make .latest point to this backup
-print('new snapshot at', sourcesnap, file=sys.stderr)
-os.symlink(sourcesnap, latest)
-print('backup complete', file=sys.stderr)
+    ####################################################################
+
+    # Ensure backup directory exists
+    if not os.path.exists(backuploc):
+        try:
+            os.makedirs(backuploc)
+        except:
+            print("error creating new backup location: " + str(backuploc))
+            sys.exit(1)
+
+    # Ensure snapshot directory exists
+    snapdir = os.path.join(sourceloc, SNAPSHOTDIR)
+    print("snapdir: " + str(snapdir))
+    if not os.path.exists(snapdir):
+        os.mkdir(snapdir)
+
+    ####################################################################
+
+    # First we need to create a new snapshot on the source disk
+    sourcesnap = new_snapshot(sourceloc, snapdir)
+    print("sourcesnap: " + str(sourcesnap))
+
+    if not sourcesnap:
+        print("snapshot failed", file=sys.stderr)
+        sys.exit(1)
+
+    # Need to sync
+    subprocess.check_call(['sync'])
+
+    # Now we need to send the snapshot (incrementally, if possible)
+    latest = os.path.join(sourceloc, LASTNAME)
+    real_latest = os.path.realpath(latest)
+
+    if os.path.exists(real_latest):
+        print('snapshot successful; sending incremental backup from', sourcesnap,
+            'to', backuploc, 'using base', real_latest, file=sys.stderr)
+        send_snapshot(sourcesnap, backuploc, real_latest, debug=args.debug)
+        if args.latest_only:
+            print('removing old snapshot', real_latest, file=sys.stderr)
+            delete_snapshot(real_latest)
+    else:
+        print('snapshot successful; sending backup from', sourcesnap,
+            'to', backuploc, file=sys.stderr)
+        send_snapshot(sourcesnap, backuploc, debug=args.debug)
+
+    if os.path.islink(latest):
+        os.unlink(latest)
+    elif os.path.exists(latest):
+        print('confusion:', latest, "should be a symlink", file=sys.stderr)
+
+    # Make .latest point to this backup
+    print('new snapshot at', sourcesnap, file=sys.stderr)
+    os.symlink(sourcesnap, latest)
+    print('backup complete', file=sys.stderr)
+    
+    # cleanup backups > NUM_BACKUPS in backup target
+    if (NUM_BACKUPS > 0):
+        delete_old_backups(backuploc,NUM_BACKUPS)
