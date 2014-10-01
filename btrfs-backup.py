@@ -47,7 +47,7 @@ def new_snapshot(disk, snapshotdir, snapshotprefix, readonly=True):
         subprocess.check_call(command)
         return snaploc
     except CalledProcessError:
-        print("Error on command: " + str(command))
+        print("Error on command:", str(command), file=sys.stderr)
         return None    
 
 def send_snapshot(srcloc, destloc, prevsnapshot=None, debug=False):
@@ -151,7 +151,7 @@ if __name__ == "__main__":
         sys.exit(1)
     
     NUM_BACKUPS = args.num_backups
-    print("Num backups: " + str(NUM_BACKUPS))
+    print("Num backups:", NUM_BACKUPS, file=sys.stderr)
 
     if args.snapshot_folder:
         SNAPSHOTDIR = args.snapshot_folder
@@ -171,18 +171,18 @@ if __name__ == "__main__":
         try:
             os.makedirs(backuploc)
         except:
-            print("error creating new backup location: " + str(backuploc))
+            print("error creating new backup location:", str(backuploc), file=sys.stderr)
             sys.exit(1)
 
     # Ensure snapshot directory exists
     snapdir = os.path.join(sourceloc, SNAPSHOTDIR)
-    print("snapdir: " + str(snapdir))
+    print("snapdir:", str(snapdir), file=sys.stderr)
     if not os.path.exists(snapdir):
         os.mkdir(snapdir)
 
     # First we need to create a new snapshot on the source disk
     sourcesnap = new_snapshot(sourceloc, snapdir, snapprefix)
-    print("sourcesnap: " + str(sourcesnap))
+    print("sourcesnap:", str(sourcesnap), file=sys.stderr)
 
     if not sourcesnap:
         print("snapshot failed", file=sys.stderr)
