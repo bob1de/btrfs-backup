@@ -31,15 +31,13 @@ import os
 import time
 import argparse
 
-####################################################################
-
 def datestr(timestamp=None):
     if timestamp is None:
         timestamp = time.localtime()
     return time.strftime('%Y%m%d-%H%M%S', timestamp)
 
-def new_snapshot(disk, snapshotdir, readonly=True):
-    snaploc = os.path.join(snapshotdir, datestr())
+def new_snapshot(disk, snapshotdir, snapshotprefix, readonly=True):
+    snaploc = os.path.join(snapshotdir, snapshotprefix + datestr())
     command = ['btrfs', 'subvolume', 'snapshot']
     if readonly:
         command += ['-r']
@@ -121,10 +119,7 @@ def delete_old_backups(backuploc, max_num_backups):
 def delete_snapshot(snaploc):
     subprocess.check_output(('btrfs', 'subvolume', 'delete', snaploc))
 
-####################################################################
-
 if __name__ == "__main__":
-
     # Parse command line arguments
     parser = argparse.ArgumentParser(description="incremental btrfs backup")
     parser.add_argument('--latest-only', action='store_true',
@@ -135,13 +130,26 @@ if __name__ == "__main__":
                         help="only store given number of backups in backup folder")
     parser.add_argument('--snapshot-folder',
                         help="snapshot folder in source filesystem")
+    parser.add_argument('--snapshot-prefix',
+                        help="prefix of snapshot name")
     parser.add_argument('source', help="filesystem to backup")
     parser.add_argument('backup', help="destination to send backups to")
     args = parser.parse_args()
 
-    sourceloc = args.source
-    backuploc = args.backup
+    #This does not include a test if the source is a subvolume. It should be and this should be tested.
+    if os.path.exists(args.source):
+        sourceloc = args.source
+    else:
+        print("backup source subvolume does not exist", file=sys.stderr)
+        sys.exit(1)
 
+    #This does not include a test if the destination is a subvolume. It should be and this should be tested.
+    if os.path.exists(args.backup):
+        backuploc = args.backup
+    else:
+        print("backup destination subvolume does not exist", file=sys.stderr)
+        sys.exit(1)
+    
     NUM_BACKUPS = args.num_backups
     print("Num backups: " + str(NUM_BACKUPS))
 
@@ -150,9 +158,13 @@ if __name__ == "__main__":
     else:
         SNAPSHOTDIR = 'snapshot'
 
-    LASTNAME = os.path.join(SNAPSHOTDIR, '.latest')
-
-    ####################################################################
+    if args.snapshot_prefix:
+        snapprefix = args.snapshot_prefix
+        latest = os.path.join(SNAPSHOTDIR, '.' + snapprefix + '_latest')
+    else:
+        snapprefix = ''
+        LASTNAME = os.path.join(SNAPSHOTDIR, '.latest')
+        latest = os.path.join(sourceloc, LASTNAME)
 
     # Ensure backup directory exists
     if not os.path.exists(backuploc):
@@ -168,10 +180,8 @@ if __name__ == "__main__":
     if not os.path.exists(snapdir):
         os.mkdir(snapdir)
 
-    ####################################################################
-
     # First we need to create a new snapshot on the source disk
-    sourcesnap = new_snapshot(sourceloc, snapdir)
+    sourcesnap = new_snapshot(sourceloc, snapdir, snapprefix)
     print("sourcesnap: " + str(sourcesnap))
 
     if not sourcesnap:
@@ -182,7 +192,6 @@ if __name__ == "__main__":
     subprocess.check_call(['sync'])
 
     # Now we need to send the snapshot (incrementally, if possible)
-    latest = os.path.join(sourceloc, LASTNAME)
     real_latest = os.path.realpath(latest)
 
     if os.path.exists(real_latest):
