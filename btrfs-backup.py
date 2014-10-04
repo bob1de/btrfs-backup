@@ -217,10 +217,11 @@ for (sourceloc, sourcesnap, snapdir) in snapshots_to_backup:
         elif os.path.exists(latest):
             problems.append('confusion:', latest, "should be a symlink but is not")
             continue
-        # Make .latest point to this backup
+        # Make .latest point to this backup, using local symlink in same directory,
+        # i.e avoid path name in link destination.
         print('New snapshot', sourcesnap, 'created (this is now latest', latest, ').',
               file=sys.stderr)
-        os.symlink(sourcesnap, latest)
+        os.symlink(os.path.basename(sourcesnap), latest)
 
 if len(problems) > 0:
     print("Problem summary:\n * " + "\n * ".join(problems) + 
