@@ -63,19 +63,21 @@ args = parser.parse_args()
 backuploc = args.backup
 trial = args.trial
 targetname = args.targetname
-if type(args.remote_backup) == "<class 'list'>":
-    remote_backup_command = args.remote_backup
-elif type(args.remote_backup) == type('str'):
-    if args.remote_backup.startswith('['):
-        remote_backup_command = eval(args.remote_backup)
+if args.remote_backup is not None:
+    if type(args.remote_backup) == "<class 'list'>":
+        remote_backup_command = args.remote_backup
+    elif type(args.remote_backup) == type('str'):
+        if args.remote_backup.startswith('['):
+            remote_backup_command = eval(args.remote_backup)
+        else:
+            remote_backup_command = [args.remote_backup]
     else:
-        remote_backup_command = [args.remote_backup]
+        raise Exception('Sorry, but type %s of remote_backup is currently not supported' % type(args.remote_backup))
+    print(" remote_backup command: ", remote_backup_command)
 else:
-    raise Exception('Sorry, but type %s of remote_backup is currently not supported' % type(args.remote_backup))
+    remote_backup_command = None
 
 print(" SOURCES: ", source_to_snapshot)
-if remote_backup_command is not None:
-    print(" remote_backup command: ", remote_backup_command)
 
 if trial:
     print("Trial run requested: only show commands that would be executed, but don't run anything")
