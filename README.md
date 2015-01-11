@@ -75,7 +75,7 @@ starting while an old one is in progress.
 
 You can workaround the lack of locking using the flock(1) command, as
 suggested at https://github.com/lordsutch/btrfs-backup/issues/4. For
-example, in /etc/cron-hourly/local-backup:
+example, in /etc/cron.hourly/local-backup:
 
     #!/bin/sh
     flock -n /tmp/btrfs-backup.lock ionice -c 3 /path/to/btrfs-backup.py /home /backup/home
