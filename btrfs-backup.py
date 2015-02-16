@@ -74,7 +74,8 @@ def send_snapshot(srcloc, destloc, prevsnapshot=None, debug=False, trial=False,
 
     if remote_backup_command is not None:
         # custom remote backup command instead of normal btrfs receive %DEST%
-        destcmd = [it.replace("%DEST%", os.path.basename(srcloc)) for it in remote_backup_command]
+        destcmd = [it.replace("%DEST%", os.path.basename(srcloc)) 
+            for it in remote_backup_command]
     else:
         destcmd = ['btrfs', 'receive'] + flags + [destloc]
     if trial:
@@ -119,7 +120,8 @@ def delete_old_backups(backuploc, source, max_num_backups, trial):
             time_to_backupname[t_backup] = d_fullpath
 
     num_backups = len(time_to_backupname)
-    print("%d backups found matching '%s/YYYYMMDD-HHMMSS-%s'" % (num_backups, backuploc, source))
+    print("%d backups found matching '%s/YYYYMMDD-HHMMSS-%s'" % \
+          (num_backups, backuploc, source))
     for t_backup in sorted(time_to_backupname.keys()):
         backup_path = time_to_backupname[t_backup]
         if num_backups < max_num_backups:
@@ -132,16 +134,15 @@ def delete_old_backups(backuploc, source, max_num_backups, trial):
 if __name__ == "__main__":
     print("btrfs-backup started at %s." % time.asctime(start_time))
 
-    source_to_snapshot = list()     # for every source remember corresponding snapshot_folder
+    source_to_snapshot = list()  # for every source remember corresponding snapshot_folder
     class SourceArgAction(argparse.Action):
         def __call__(self, parser, namespace, values, option_string=None):
-            #print('%r %r %r %r' % (namespace, values, option_string, namespace.snapshot_folder))
             tup = (values, namespace.snapshot_folder)
             source_to_snapshot.append(tup)
 
-    parser = argparse.ArgumentParser(description="incremental btrfs backup (for multiple "
-                                     " partitions, naming snapshots created together with the "
-                                     " same base datetime stamp)")
+    parser = argparse.ArgumentParser(description="incremental btrfs backup (for "
+        " multiple partitions, naming snapshots created together with the same "
+        " base datetime stamp)")
     parser.add_argument('--latest-only', action='store_true',
                         help="only keep latest snapshot on source filesystem")
     parser.add_argument('-d', '--debug', action='store_true',
@@ -151,12 +152,18 @@ if __name__ == "__main__":
     parser.add_argument('--snapshot-folder', action='store', default=".snapshot",
                         help="snapshot folder in source filesystem")
     parser.add_argument('-t', '--trial', action='store_true',
-                help="trial run: only show commands that would be executed, but don't run anything")
+        help="trial run: only show commands that would be executed, but don't run them")
     # can be used multiple times e.g. -source /boot -source /mnt/@ -source /mnt/@home
-    parser.add_argument('-s', '--source', action=SourceArgAction, help="filesystem(s) to backup")
-    parser.add_argument('-b', '--backup', help="(local) destination directory to send backups to")
-    parser.add_argument('-r', '--remote_backup', help="command to connect/run at destination host, using %DEST% as placeholder for destination snapshot filename (if needed)")
-    parser.add_argument('-T', '--targetname', help="name of backup target, useful for creating multiple symlinks that point to the last backed up snapshot per target")
+    parser.add_argument('-s', '--source', action=SourceArgAction, 
+        help="filesystem(s) to backup")
+    parser.add_argument('-b', '--backup', help="(local) destination directory to "
+        "send backups to")
+    parser.add_argument('-r', '--remote_backup', help="command to connect/run at "
+        "destination host, using %DEST% as placeholder for destination snapshot "
+        "filename (if needed)")
+    parser.add_argument('-T', '--targetname', help="name of backup target, useful "
+        "for creating multiple symlinks that point to the last backed up snapshot "
+        "per target")
     args = parser.parse_args()
 
     backuploc = args.backup
@@ -179,7 +186,8 @@ if __name__ == "__main__":
             else:
                 remote_backup_command = [args.remote_backup]
         else:
-            raise Exception('Sorry, but type %s of remote_backup is currently not supported' % type(args.remote_backup))
+            raise Exception('Sorry, but type %s of remote_backup is currently "
+                "not supported' % type(args.remote_backup))
         print(" remote_backup command: ", remote_backup_command)
     else:
         remote_backup_command = None
@@ -187,7 +195,8 @@ if __name__ == "__main__":
     print(" SOURCES: ", source_to_snapshot)
 
     if trial:
-        print("Trial run requested: only show commands that would be executed, but don't run anything")
+        print("Trial run requested: only show commands that would be executed, but "
+            "don't run anything")
 
     # First we need to create a new snapshot on the source disk(s) for all sources
     snapshots_to_backup = list()
@@ -196,8 +205,8 @@ if __name__ == "__main__":
         # Ensure snapshot directory exists
         # TODO: test if the source is a subvolume, it should be and this should be tested.
         if not os.path.exists(snapdir):
-            problems.append("Snapshot base path %r for source %r does not exist, source skipped." % \
-                (snapdir, sourceloc))
+            problems.append("Snapshot base path %r for source %r does not exist, "
+                "source skipped." % (snapdir, sourceloc))
             continue
         sourcesnap = new_snapshot(sourceloc, snapdir, trial=trial)
         if not sourcesnap:
@@ -207,8 +216,8 @@ if __name__ == "__main__":
 
     if len(problems) > 0:
         if trial:
-            print("Trial: ignoring problems encountered while creating snapshots:\n * " + \
-                  "\n * ".join(problems), file=sys.stderr)
+            print("Trial: ignoring problems encountered while creating snapshots:"
+                "\n * " + "\n * ".join(problems), file=sys.stderr)
         else:
             print("Problems encountered while creating snapshots:\n * " + \
                   "\n * ".join(problems), file=sys.stderr)
@@ -221,7 +230,8 @@ if __name__ == "__main__":
     subprocess.check_call(synccmd)
     print('Creating snapshot(s) was successful.', file=sys.stderr)
     if (backuploc is None) and (remote_backup_command is None):
-        print('Neither local backup location nor remote backup command specified, stopping now after creating snapshots.', file=sys.stderr)
+        print('Neither local backup location nor remote backup command specified, "
+            "stopping now after creating snapshots.', file=sys.stderr)
         sys.exit(0)
 
     if backuploc is None:
@@ -241,14 +251,16 @@ if __name__ == "__main__":
                               os.path.basename(sourceloc))
         real_latest = os.path.realpath(latest)
         if trial:
-            print("trial: searching realpath of latest symlink %r for source %r" % (latest, sourceloc))
+            print("trial: searching realpath of latest symlink %r for source %r" % \
+                  (latest, sourceloc))
         else:
-            print("searching realpath of latest symlink %r for source %r" % (real_latest, sourceloc))
+            print("searching realpath of latest symlink %r for source %r" % \
+                  (real_latest, sourceloc))
         if os.path.exists(real_latest):
             print('sending incremental backup from', sourcesnap,
                 'to', backuploc, 'using base', real_latest, file=sys.stderr)
-            send_snapshot(sourcesnap, backuploc, real_latest, debug=args.debug, trial=trial,
-                          remote_backup_command=remote_backup_command)
+            send_snapshot(sourcesnap, backuploc, real_latest, debug=args.debug,
+                trial=trial, remote_backup_command=remote_backup_command)
             if args.latest_only:
                 print('removing old snapshot', real_latest, file=sys.stderr)
                 delete_snapshot(real_latest, trial)
@@ -258,7 +270,8 @@ if __name__ == "__main__":
             send_snapshot(sourcesnap, backuploc, debug=args.debug, trial=trial,
                           remote_backup_command=remote_backup_command)
         if trial:
-            print("trial: would change latest link %r to point to %r" % (latest, sourcesnap))
+            print("trial: would change latest link %r to point to %r" % \
+                  (latest, sourcesnap))
         else:
             print("changing latest link %r to point to %r" % (latest, sourcesnap))
             if os.path.islink(latest):
