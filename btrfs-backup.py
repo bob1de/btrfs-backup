@@ -89,60 +89,45 @@ def send_snapshot(srcloc, destloc, prevsnapshot=None, debug=False, trial=False,
     #print(pipe.returncode, file=sys.stderr)
     return pipe.returncode
 
-def find_old_backup(bak_dir_time_objs,recurse_val = 0):
-    """ Find oldest time object in "bak_dir_time_objs" structure.
-        recurse_val = 0 -> start with top entry "year", default
-    """
-    tmp = []
-    for timeobj in bak_dir_time_objs:
-        tmp.append(timeobj[recurse_val])
-
-    min_val = min(tmp) # find minimum time value
-    new_timeobj = []
-
-    for timeobj in bak_dir_time_objs:
-        if(timeobj[recurse_val] == min_val):
-            new_timeobj.append(timeobj)
-
-    if (len(new_timeobj) > 1):
-        return find_old_backup(new_timeobj,recurse_val+1) # recursive call from year to minute
-    else:
-        return new_timeobj[0]
-
-def delete_old_backups(backuploc, source_postfix, max_num_backups, trial):
-    """ Delete old backup directories in backup target folder based on their date.
-        Warning: This function will delete btrfs snapshots in target folder based on
-        the parameter max_num_backups!
-    """
-    # As snapshots of different partitions/mountpoints can be stored in the same
-    # directory now, have to filter only those that match the current source (postfix).
-    # recurse target backup folder until "max_num_backups" is reached
-    backups_of_source = [d for d in os.listdir(backuploc)
-                            if d.endswith(source_postfix)]
-    print(backups_of_source)
-    cur_num_backups = len(backups_of_source)
-    for i in range(cur_num_backups - max_num_backups):
-        # find all backup snapshots in directory and build time object list
-        bak_dir_time_objs = []
-        backups_of_source = [d for d in os.listdir(backuploc)
-                                if d.endswith(source_postfix)]
-        for directory in backups_of_source:
-            timestamp = re.sub(source_postfix, '', directory)
-            bak_dir_time_objs.append(time.strptime(timestamp, '%Y%m%d-%H%M%S'))
-
-        # find oldest directory object and mark to remove
-        bak_dir_to_rm = datestr(find_old_backup(bak_dir_time_objs, 0)) + source_postfix
-        bak_dir_to_rm_path = os.path.join(backuploc, bak_dir_to_rm)
-        print ("Removing old backup dir " + bak_dir_to_rm_path)
-        # delete snapshot of oldest backup snapshot
-        delete_snapshot(bak_dir_to_rm_path, trial)
-
 def delete_snapshot(snaploc, trial=False):
     delcmd = ['btrfs', 'subvolume', 'delete', snaploc]
     if trial:
         delcmd.insert(0, 'echo')
-    delcmd.insert(0, 'echo')    # make sure that during testing snapshots are not deleted
     subprocess.check_output(delcmd)
+
+def delete_old_backups(backuploc, source, max_num_backups, trial):
+    """ Delete old backup directories for 'source' in backup target
+        folder based on their date.
+        Warning: This function will delete btrfs snapshots in target
+        folder based on the parameter max_num_backups!
+        As snapshots of different partitions/mountpoints can be stored
+        in the same directory, filter those that match exactly the
+        current source (postfix).
+    """   
+    time_to_backupname = dict()
+    for d in os.listdir(backuploc): 
+        m = re.match(r"^(?P<time>\d{8}\-\d{6})\-" + source + '$', d)
+        if m is not None:    # only add those backup paths that match _exactly_
+            d_fullpath = os.path.join(backuploc, d)
+            timestr = m.group('time')
+            t_backup = time.strptime(timestr, '%Y%m%d-%H%M%S')
+            if t_backup in time_to_backupname:
+                raise Exception("Backup time '%s' occurs twice while searching for "
+                    "old backups to delete, this is forbidden: %s and %s" % \
+                    (timestr, os.path.join(backuploc,time_to_backupname[t_backup]),
+                    d_fullpath))
+            time_to_backupname[t_backup] = d_fullpath
+
+    num_backups = len(time_to_backupname)
+    print("%d backups found matching '%s/YYYYMMDD-HHMMSS-%s'" % (num_backups, backuploc, source))
+    for t_backup in sorted(time_to_backupname.keys()):
+        backup_path = time_to_backupname[t_backup]
+        if num_backups < max_num_backups:
+            print("Keeping #%d: %s" % (num_backups, backup_path))
+        else:
+            print("Deleting #%d: %s" % (num_backups, backup_path))
+            delete_snapshot(backup_path, trial)
+        num_backups -= 1
 
 if __name__ == "__main__":
     print("btrfs-backup started at %s." % time.asctime(start_time))
