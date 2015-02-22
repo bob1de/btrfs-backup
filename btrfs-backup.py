@@ -113,7 +113,7 @@ def delete_old_backups(backuploc, source, max_num_backups, trial):
             timestr = m.group('time')
             t_backup = time.strptime(timestr, '%Y%m%d-%H%M%S')
             if t_backup in time_to_backupname:
-                raise Exception("Backup time '%s' occurs twice while searching for "
+                raise Exception("Backup time '%s' occurs twice while searching for " \
                     "old backups to delete, this is forbidden: %s and %s" % \
                     (timestr, os.path.join(backuploc,time_to_backupname[t_backup]),
                     d_fullpath))
@@ -186,7 +186,7 @@ if __name__ == "__main__":
             else:
                 remote_backup_command = [args.remote_backup]
         else:
-            raise Exception('Sorry, but type %s of remote_backup is currently "
+            raise Exception('Sorry, but type %s of remote_backup is currently " \
                 "not supported' % type(args.remote_backup))
         print(" remote_backup command: ", remote_backup_command)
     else:
@@ -230,7 +230,7 @@ if __name__ == "__main__":
     subprocess.check_call(synccmd)
     print('Creating snapshot(s) was successful.', file=sys.stderr)
     if (backuploc is None) and (remote_backup_command is None):
-        print('Neither local backup location nor remote backup command specified, "
+        print('Neither local backup location nor remote backup command specified, " \
             "stopping now after creating snapshots.', file=sys.stderr)
         sys.exit(0)
 
