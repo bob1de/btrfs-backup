@@ -106,7 +106,10 @@ def delete_old_backups(backuploc, max_num_backups):
         # find all backup snapshots in directory and build time object list
         bak_dir_time_objs = []
         for directory in os.listdir(backuploc):
-            bak_dir_time_objs.append(time.strptime(directory, '%Y%m%d-%H%M%S'))
+            try:
+                bak_dir_time_objs.append(time.strptime(directory, '%Y%m%d-%H%M%S'))
+            except:
+                pass
         
         # find oldest directory object and mark to remove
         bak_dir_to_remove = datestr(find_old_backup(bak_dir_time_objs, 0))
