@@ -99,8 +99,8 @@ and have corresponding entries in /etc/fstab to mount the subvolumes
 from /active-subvols/. One benefit of this approach is that restoring
 a snapshot can be done entirely with btrfs tools:
 
-    # btrfs send /backup/root/YYMMDD-HHMMSS | btrfs receive /snapshot-subvol/home/
-    # btrfs send /backup/home/YYMMDD-HHMMSS | btrfs receive /snapshot-subvol/root/
+    # btrfs send /backup/YYMMDD-HHMMSS | btrfs receive /snapshot-subvol/home/
+    # btrfs send /backup/home/YYMMDD-HHMMSS | btrfs receive /snapshot-subvol/
     # btrfs subvolume snapshot /snapshot-subvol/YYMMDD-HHMMSS /active-subvol/root
     # btrfs subvolume snapshot /snapshot-subvol/home/YYMMDD-HHMMSS /active-subvol/home
 
