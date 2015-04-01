@@ -92,7 +92,7 @@ An alternative structure is to keep all subvolumes in the root directory
     /active-subvol
     /active-subvol/root
     /active-subvol/home
-    /snapshot-subvol/root/YYMMDD-HHMMSS
+    /snapshot-subvol/YYMMDD-HHMMSS
     /snapshot-subvol/home/YYMMDD-HHMMSS
 
 and have corresponding entries in /etc/fstab to mount the subvolumes
@@ -101,7 +101,7 @@ a snapshot can be done entirely with btrfs tools:
 
     # btrfs send /backup/root/YYMMDD-HHMMSS | btrfs receive /snapshot-subvol/home/
     # btrfs send /backup/home/YYMMDD-HHMMSS | btrfs receive /snapshot-subvol/root/
-    # btrfs subvolume snapshot /snapshot-subvol/root/YYMMDD-HHMMSS /active-subvol/root
+    # btrfs subvolume snapshot /snapshot-subvol/YYMMDD-HHMMSS /active-subvol/root
     # btrfs subvolume snapshot /snapshot-subvol/home/YYMMDD-HHMMSS /active-subvol/home
 
 The snapshots from btrfs-backup may be placed in /snapshot-subvol/ by
