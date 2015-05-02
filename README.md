@@ -82,3 +82,44 @@ example, in /etc/cron.hourly/local-backup:
 
 You can omit the '-n' parameter if you want to wait rather than fail
 in this circumstance.
+
+Alternative workflow
+====================
+
+An alternative structure is to keep all subvolumes in the root directory
+
+    /
+    /active-subvol
+    /active-subvol/root
+    /active-subvol/home
+    /snapshot-subvol/YYMMDD-HHMMSS
+    /snapshot-subvol/home/YYMMDD-HHMMSS
+
+and have corresponding entries in /etc/fstab to mount the subvolumes
+from /active-subvols/. One benefit of this approach is that restoring
+a snapshot can be done entirely with btrfs tools:
+
+    # btrfs send /backup/YYMMDD-HHMMSS | btrfs receive /snapshot-subvol/home/
+    # btrfs send /backup/home/YYMMDD-HHMMSS | btrfs receive /snapshot-subvol/
+    # btrfs subvolume snapshot /snapshot-subvol/YYMMDD-HHMMSS /active-subvol/root
+    # btrfs subvolume snapshot /snapshot-subvol/home/YYMMDD-HHMMSS /active-subvol/home
+
+The snapshots from btrfs-backup may be placed in /snapshot-subvol/ by
+using the --snapshot-dir option. Here is a simple backup script using
+this approach:
+
+```bash
+#!/usr/bin/env bash
+
+cmd=/usr/local/bin/btrfs-backup.py
+destdir=/media/backup # Mount backup disk here
+dirs=( '/' '/home' )  # Backup these dirs
+btrfs0=/run/btrfs     # Mount subvolid=0 here
+nbackup=24            # Keep this many backups on $destdir
+
+for d in "${dirs[@]}"; do
+    args="--num-backups $nbackup --snapshot-folder $btrfs0/snapshot_subvol$d --latest-only"
+    echo Executing $cmd $args $d $destdir$d
+    $cmd $args $d $destdir$d
+done
+```
