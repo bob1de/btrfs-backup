@@ -93,7 +93,7 @@ def find_old_backup(bak_dir_time_objs,recurse_val = 0):
     else:        
         return new_timeobj[0]
 
-def delete_old_backups(backuploc, max_num_backups):
+def delete_old_backups(backuploc, max_num_backups, snapshotprefix=''):
     """ Delete old backup directories in backup target folder based on their date.
         Warning: This function will delete btrfs snapshots in target folder based on the parameter
         max_num_backups!
@@ -106,10 +106,12 @@ def delete_old_backups(backuploc, max_num_backups):
         # find all backup snapshots in directory and build time object list
         bak_dir_time_objs = []
         for directory in os.listdir(backuploc):
-            try:
-                bak_dir_time_objs.append(time.strptime(directory, '%Y%m%d-%H%M%S'))
-            except:
-                pass
+            if os.path.isdir(directory) and directory.startswith(snapshotprefix):
+                dirname = directory[len(snapshotprefix):]
+                try:
+                    bak_dir_time_objs.append(time.strptime(dirname, '%Y%m%d-%H%M%S'))
+                except:
+                    pass
         
         # find oldest directory object and mark to remove
         bak_dir_to_remove = datestr(find_old_backup(bak_dir_time_objs, 0))
@@ -221,4 +223,4 @@ if __name__ == "__main__":
     
     # cleanup backups > NUM_BACKUPS in backup target
     if (NUM_BACKUPS > 0):
-        delete_old_backups(backuploc,NUM_BACKUPS)
+        delete_old_backups(backuploc, NUM_BACKUPS, snapprefix)
