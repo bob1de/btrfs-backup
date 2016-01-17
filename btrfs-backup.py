@@ -48,7 +48,7 @@ def new_snapshot(disk, snapshotdir, snapshotprefix, readonly=True):
         return snaploc
     except CalledProcessError:
         print("Error on command:", str(command), file=sys.stderr)
-        return None    
+        return None
 
 def send_snapshot(srcloc, destloc, prevsnapshot=None, debug=False):
     if debug:
@@ -76,33 +76,33 @@ def find_old_backup(bak_dir_time_objs,recurse_val = 0):
     """ Find oldest time object in "bak_dir_time_objs" structure.
         recurse_val = 0 -> start with top entry "year", default
     """
-    
+
     tmp = []
     for timeobj in bak_dir_time_objs:
         tmp.append(timeobj[recurse_val])
-    
+
     min_val = min(tmp) # find minimum time value
     new_timeobj = []
 
     for timeobj in bak_dir_time_objs:
         if(timeobj[recurse_val] == min_val):
             new_timeobj.append(timeobj)
-    
+
     if (len(new_timeobj) > 1):
         return find_old_backup(new_timeobj,recurse_val+1) # recursive call from year to minute
-    else:        
+    else:
         return new_timeobj[0]
 
 def delete_old_backups(backuploc, max_num_backups, snapshotprefix=''):
     """ Delete old backup directories in backup target folder based on their date.
         Warning: This function will delete btrfs snapshots in target folder based on the parameter
         max_num_backups!
-    """   
-    
+    """
+
     # recurse target backup folder until "max_num_backups" is reached
     cur_num_backups = len(os.listdir(backuploc))
     for i in range(cur_num_backups - max_num_backups):
-        
+
         # find all backup snapshots in directory and build time object list
         bak_dir_time_objs = []
         for directory in os.listdir(backuploc):
@@ -112,12 +112,12 @@ def delete_old_backups(backuploc, max_num_backups, snapshotprefix=''):
                     bak_dir_time_objs.append(time.strptime(dirname, '%Y%m%d-%H%M%S'))
                 except:
                     pass
-        
+
         # find oldest directory object and mark to remove
         bak_dir_to_remove = datestr(find_old_backup(bak_dir_time_objs, 0))
         bak_dir_to_remove_path = os.path.join(backuploc, bak_dir_to_remove)
         print ("Removing old backup dir " + bak_dir_to_remove_path)
-        
+
         # delete snapshot of oldest backup snapshot
         delete_snapshot(bak_dir_to_remove_path)
 
@@ -154,7 +154,7 @@ if __name__ == "__main__":
     else:
         print("backup destination subvolume does not exist", file=sys.stderr)
         sys.exit(1)
-    
+
     NUM_BACKUPS = args.num_backups
     print("Num backups:", NUM_BACKUPS, file=sys.stderr)
 
@@ -220,7 +220,7 @@ if __name__ == "__main__":
     print('new snapshot at', sourcesnap, file=sys.stderr)
     os.symlink(sourcesnap, latest)
     print('backup complete', file=sys.stderr)
-    
+
     # cleanup backups > NUM_BACKUPS in backup target
     if (NUM_BACKUPS > 0):
         delete_old_backups(backuploc, NUM_BACKUPS, snapprefix)
