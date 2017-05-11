@@ -106,7 +106,7 @@ def delete_old_backups(backuploc, max_num_backups, snapshotprefix=''):
         # find all backup snapshots in directory and build time object list
         bak_dir_time_objs = []
         for directory in os.listdir(backuploc):
-            if os.path.isdir(directory) and directory.startswith(snapshotprefix):
+            if os.path.isdir(os.path.join(backuploc, directory)) and directory.startswith(snapshotprefix):
                 dirname = directory[len(snapshotprefix):]
                 try:
                     bak_dir_time_objs.append(time.strptime(dirname, '%Y%m%d-%H%M%S'))
