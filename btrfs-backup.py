@@ -37,7 +37,8 @@ def datestr(timestamp=None):
     return time.strftime('%Y%m%d-%H%M%S', timestamp)
 
 def new_snapshot(disk, snapshotdir, snapshotprefix, readonly=True):
-    snaploc = os.path.join(snapshotdir, snapshotprefix + datestr())
+    snapname = snapshotprefix + datestr()
+    snaploc = os.path.join(snapshotdir, snapname)
     command = ['btrfs', 'subvolume', 'snapshot']
     if readonly:
         command += ['-r']
@@ -46,7 +47,7 @@ def new_snapshot(disk, snapshotdir, snapshotprefix, readonly=True):
     try:
         subprocess.check_call(command)
         return snaploc
-    except CalledProcessError:
+    except subprocess.CalledProcessError:
         print("Error on command:", str(command), file=sys.stderr)
         return None
 
@@ -72,56 +73,33 @@ def send_snapshot(srcloc, destloc, prevsnapshot=None, debug=False):
     #print(pipe.returncode, file=sys.stderr)
     return pipe.returncode
 
-def find_old_backup(bak_dir_time_objs,recurse_val = 0):
-    """ Find oldest time object in "bak_dir_time_objs" structure.
-        recurse_val = 0 -> start with top entry "year", default
-    """
-
-    tmp = []
-    for timeobj in bak_dir_time_objs:
-        tmp.append(timeobj[recurse_val])
-
-    min_val = min(tmp) # find minimum time value
-    new_timeobj = []
-
-    for timeobj in bak_dir_time_objs:
-        if(timeobj[recurse_val] == min_val):
-            new_timeobj.append(timeobj)
-
-    if (len(new_timeobj) > 1):
-        return find_old_backup(new_timeobj,recurse_val+1) # recursive call from year to minute
-    else:
-        return new_timeobj[0]
-
 def delete_old_backups(backuploc, max_num_backups, snapshotprefix=''):
     """ Delete old backup directories in backup target folder based on their date.
         Warning: This function will delete btrfs snapshots in target folder based on the parameter
         max_num_backups!
     """
 
-    # recurse target backup folder until "max_num_backups" is reached
-    cur_num_backups = len(os.listdir(backuploc))
-    for i in range(cur_num_backups - max_num_backups):
+    backup_dirs = []
+    for item in os.listdir(backuploc):
+        if os.path.isdir(os.path.join(backuploc, item)) and \
+           item.startswith(snapshotprefix):
+            time_str = item[len(snapshotprefix):]
+            try:
+                time.strptime(time_str, '%Y%m%d-%H%M%S')
+            except ValueError:
+                # no valid name for current prefix + time string
+                continue
+            backup_dirs.append(item)
 
-        # find all backup snapshots in directory and build time object list
-        bak_dir_time_objs = []
-        for directory in os.listdir(backuploc):
-            if os.path.isdir(os.path.join(backuploc, directory)) and directory.startswith(snapshotprefix):
-                dirname = directory[len(snapshotprefix):]
-                try:
-                    bak_dir_time_objs.append(time.strptime(dirname, '%Y%m%d-%H%M%S'))
-                except Exception as e:
-                    print("Exception:", e, file=sys.stderr)
+    # sort by date, then time;
+    # this works because prefix is the same for all entries
+    backup_dirs.sort()
 
-        if bak_dir_time_objs:
-            # find oldest directory object and mark to remove
-            backup_to_remove = datestr(find_old_backup(bak_dir_time_objs, 0))
-            bak_dir_to_remove = snapshotprefix + backup_to_remove
-            bak_dir_to_remove_path = os.path.join(backuploc, bak_dir_to_remove)
-            print ("Removing old backup dir " + bak_dir_to_remove_path)
-
-            # delete snapshot of oldest backup snapshot
-            delete_snapshot(bak_dir_to_remove_path)
+    while backup_dirs and len(backup_dirs) > max_num_backups:
+        backup_to_remove = os.path.join(backuploc, backup_dirs.pop(0))
+        print ("Removing old backup dir " + backup_to_remove)
+        # delete snapshot of oldest backup snapshot
+        delete_snapshot(backup_to_remove)
 
 def delete_snapshot(snaploc):
     subprocess.check_output(('btrfs', 'subvolume', 'delete', snaploc))
@@ -164,14 +142,16 @@ if __name__ == "__main__":
         SNAPSHOTDIR = args.snapshot_folder
     else:
         SNAPSHOTDIR = 'snapshot'
+    if not SNAPSHOTDIR.startswith('/'):
+        SNAPSHOTDIR = os.path.join(sourceloc, SNAPSHOTDIR)
 
     if args.snapshot_prefix:
         snapprefix = args.snapshot_prefix
-        latest = os.path.join(SNAPSHOTDIR, '.' + snapprefix + '_latest')
+        LASTNAME = '.' + snapprefix + '_latest'
     else:
         snapprefix = ''
-        LASTNAME = os.path.join(SNAPSHOTDIR, '.latest')
-        latest = os.path.join(sourceloc, LASTNAME)
+        LASTNAME = '.latest'
+    latest = os.path.join(SNAPSHOTDIR, LASTNAME)
 
     # Ensure backup directory exists
     if not os.path.exists(backuploc):
@@ -218,9 +198,9 @@ if __name__ == "__main__":
     elif os.path.exists(latest):
         print('confusion:', latest, "should be a symlink", file=sys.stderr)
 
-    # Make .latest point to this backup
+    # Make .latest point to this backup - use relative symlink
     print('new snapshot at', sourcesnap, file=sys.stderr)
-    os.symlink(sourcesnap, latest)
+    os.symlink(os.path.basename(sourcesnap), latest)
     print('backup complete', file=sys.stderr)
 
     # cleanup backups > NUM_BACKUPS in backup target
