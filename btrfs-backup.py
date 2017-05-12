@@ -25,10 +25,10 @@
 # CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-import subprocess
 import sys
 import os
 import time
+import subprocess
 import argparse
 
 
@@ -48,20 +48,43 @@ def str2date(timestring=None, format=None):
         format = TIMEFORMAT
     return time.strptime(timestring, format)
 
+def is_btrfs(path):
+    """Checks whether path is inside a btrfs file system"""
+    path = os.path.normpath(os.path.abspath(path))
+    best_match = ''
+    best_match_fstype = ''
+    for line in open('/proc/mounts'):
+        try:
+            mountpoint, fstype = line.split(' ')[1:3]
+        except ValueError:
+            continue
+        if path.startswith(mountpoint) and len(mountpoint) > len(best_match):
+            best_match = mountpoint
+            best_match_fstype = fstype
+    return best_match_fstype == 'btrfs'
+
+def is_subvolume(path):
+    """Checks whether the given path is a btrfs subvolume."""
+    if not is_btrfs(path):
+        return False
+    # subvolumes always have inode 256
+    st = os.stat(path)
+    return st.st_ino == 256
+
 def new_snapshot(disk, snapshotdir, snapshotprefix, readonly=True):
     snapname = snapshotprefix + date2str()
     snaploc = os.path.join(snapshotdir, snapname)
-    command = ['btrfs', 'subvolume', 'snapshot']
+    cmd = ['btrfs', 'subvolume', 'snapshot']
     if readonly:
-        command += ['-r']
-    command += [disk, snaploc]
+        cmd += ['-r']
+    cmd += [disk, snaploc]
 
     try:
-        subprocess.check_call(command)
-        return snaploc
+        subprocess.check_call(cmd)
     except subprocess.CalledProcessError:
-        print("Error on command:", str(command), file=sys.stderr)
+        print("Error on command:", cmd, file=sys.stderr)
         return None
+    return snaploc
 
 def send_snapshot(srcloc, destloc, prevsnapshot=None, debug=False):
     if debug:
@@ -76,14 +99,13 @@ def send_snapshot(srcloc, destloc, prevsnapshot=None, debug=False):
 
     destcmd = ['btrfs', 'receive'] + flags + [destloc]
 
-    #print(srccmd)
-    #print(destcmd)
-
     pipe = subprocess.Popen(srccmd, stdout=subprocess.PIPE)
-    output = subprocess.check_output(destcmd, stdin=pipe.stdout)
-    pipe.wait()
-    #print(pipe.returncode, file=sys.stderr)
-    return pipe.returncode
+    try:
+        output = subprocess.check_call(destcmd, stdin=pipe.stdout)
+    except subprocess.CalledProcessError:
+        print("Error on command:", destcmd, file=sys.stderr)
+        return None
+    return pipe.wait()
 
 def delete_old_backups(backuploc, max_num_backups, snapshotprefix=''):
     """ Delete old backup directories in backup target folder based on their date.
@@ -113,7 +135,11 @@ def delete_old_backups(backuploc, max_num_backups, snapshotprefix=''):
         delete_snapshot(backup_to_remove)
 
 def delete_snapshot(snaploc):
-    subprocess.check_output(('btrfs', 'subvolume', 'delete', snaploc))
+    cmd = ['btrfs', 'subvolume', 'delete', snaploc]
+    try:
+        subprocess.check_call(cmd)
+    except subprocess.CalledProcessError:
+        print("Error on command:", cmd, file=sys.stderr)
 
 if __name__ == "__main__":
     # Parse command line arguments
@@ -122,6 +148,9 @@ if __name__ == "__main__":
                         help="only keep latest snapshot on source filesystem")
     parser.add_argument('-d', '--debug', action='store_true',
                         help="enable btrfs debugging on send/receive")
+    parser.add_argument('--skip-filesystem-checks', action='store_true',
+                        help="don't check whether source / backup is a "
+                             "btrfs subvolume / filesystem")
     parser.add_argument('--num-backups', type=int, default=0,
                         help="only store given number of backups in backup folder")
     parser.add_argument('--snapshot-folder',
@@ -132,18 +161,22 @@ if __name__ == "__main__":
     parser.add_argument('backup', help="destination to send backups to")
     args = parser.parse_args()
 
-    #This does not include a test if the source is a subvolume. It should be and this should be tested.
     if os.path.exists(args.source):
         sourceloc = args.source
     else:
-        print("backup source subvolume does not exist", file=sys.stderr)
+        print("backup source does not exist", file=sys.stderr)
+        sys.exit(1)
+    if not args.skip_filesystem_checks and not is_subvolume(sourceloc):
+        print("backup source does not seem to be a btrfs subvolume")
         sys.exit(1)
 
-    #This does not include a test if the destination is a subvolume. It should be and this should be tested.
     if os.path.exists(args.backup):
         backuploc = args.backup
     else:
-        print("backup destination subvolume does not exist", file=sys.stderr)
+        print("backup destination does not exist", file=sys.stderr)
+        sys.exit(1)
+    if not args.skip_filesystem_checks and not is_btrfs(backuploc):
+        print("backup destination does not seem to be on a btrfs file system")
         sys.exit(1)
 
     NUM_BACKUPS = args.num_backups
@@ -187,22 +220,32 @@ if __name__ == "__main__":
         sys.exit(1)
 
     # Need to sync
-    subprocess.check_call(['sync'])
+    cmd = ['sync']
+    try:
+        subprocess.check_call(cmd)
+    except subprocess.CalledProcessError:
+        print("Error on command:", cmd, file=sys.stderr)
+
+    print('Snapshot successful; sending backup', file=sys.stderr)
+    print(' - from        ', sourcesnap, file=sys.stderr)
+    print(' - to          ', backuploc, file=sys.stderr)
 
     # Now we need to send the snapshot (incrementally, if possible)
     real_latest = os.path.realpath(latest)
-
     if os.path.exists(real_latest):
-        print('snapshot successful; sending incremental backup from', sourcesnap,
-            'to', backuploc, 'using base', real_latest, file=sys.stderr)
-        send_snapshot(sourcesnap, backuploc, real_latest, debug=args.debug)
-        if args.latest_only:
-            print('removing old snapshot', real_latest, file=sys.stderr)
-            delete_snapshot(real_latest)
+        print(' - using parent', real_latest, file=sys.stderr)
     else:
-        print('snapshot successful; sending backup from', sourcesnap,
-            'to', backuploc, file=sys.stderr)
-        send_snapshot(sourcesnap, backuploc, debug=args.debug)
+        real_latest = None
+
+    result = send_snapshot(sourcesnap, backuploc, prevsnapshot=real_latest,
+                           debug=args.debug)
+    if result != 0:
+        print("Error during btrfs send / receive, aborting", file=sys.stderr)
+        sys.exit(1)
+
+    if real_latest is not None and args.latest_only:
+        print('Removing old snapshot', real_latest, file=sys.stderr)
+        delete_snapshot(real_latest)
 
     if os.path.islink(latest):
         os.unlink(latest)
@@ -210,9 +253,9 @@ if __name__ == "__main__":
         print('confusion:', latest, "should be a symlink", file=sys.stderr)
 
     # Make .latest point to this backup - use relative symlink
-    print('new snapshot at', sourcesnap, file=sys.stderr)
+    print('Latest snapshot now at', sourcesnap, file=sys.stderr)
     os.symlink(os.path.basename(sourcesnap), latest)
-    print('backup complete', file=sys.stderr)
+    print('Backup complete', file=sys.stderr)
 
     # cleanup backups > NUM_BACKUPS in backup target
     if (NUM_BACKUPS > 0):
