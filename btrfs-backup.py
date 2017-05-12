@@ -31,13 +31,25 @@ import os
 import time
 import argparse
 
-def datestr(timestamp=None):
+
+TIMEFORMAT = '%Y%m%d-%H%M%S'
+
+def date2str(timestamp=None, format=None):
     if timestamp is None:
         timestamp = time.localtime()
-    return time.strftime('%Y%m%d-%H%M%S', timestamp)
+    if format is None:
+        format = TIMEFORMAT
+    return time.strftime(format, timestamp)
+
+def str2date(timestring=None, format=None):
+    if timestring is None:
+        return time.localtime()
+    if format is None:
+        format = TIMEFORMAT
+    return time.strptime(timestring, format)
 
 def new_snapshot(disk, snapshotdir, snapshotprefix, readonly=True):
-    snapname = snapshotprefix + datestr()
+    snapname = snapshotprefix + date2str()
     snaploc = os.path.join(snapshotdir, snapname)
     command = ['btrfs', 'subvolume', 'snapshot']
     if readonly:
@@ -79,24 +91,23 @@ def delete_old_backups(backuploc, max_num_backups, snapshotprefix=''):
         max_num_backups!
     """
 
-    backup_dirs = []
+    time_objs = []
     for item in os.listdir(backuploc):
         if os.path.isdir(os.path.join(backuploc, item)) and \
            item.startswith(snapshotprefix):
             time_str = item[len(snapshotprefix):]
             try:
-                time.strptime(time_str, '%Y%m%d-%H%M%S')
+                time_objs.append(str2date(time_str))
             except ValueError:
                 # no valid name for current prefix + time string
                 continue
-            backup_dirs.append(item)
 
     # sort by date, then time;
-    # this works because prefix is the same for all entries
-    backup_dirs.sort()
+    time_objs.sort()
 
-    while backup_dirs and len(backup_dirs) > max_num_backups:
-        backup_to_remove = os.path.join(backuploc, backup_dirs.pop(0))
+    while time_objs and len(time_objs) > max_num_backups:
+        backup_to_remove = os.path.join(backuploc, snapprefix +
+                                        date2str(time_objs.pop(0)))
         print ("Removing old backup dir " + backup_to_remove)
         # delete snapshot of oldest backup snapshot
         delete_snapshot(backup_to_remove)
