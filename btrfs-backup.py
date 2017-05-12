@@ -86,7 +86,7 @@ def new_snapshot(disk, snapshotdir, snapshotprefix, readonly=True):
         return None
     return snaploc
 
-def send_snapshot(srcloc, destloc, prevsnapshot=None, debug=False):
+def send_snapshot(src, dest, prevsnapshot=None, dest_cmd=False, debug=False):
     if debug:
         flags = ['-vv']
     else:
@@ -95,9 +95,12 @@ def send_snapshot(srcloc, destloc, prevsnapshot=None, debug=False):
     srccmd = ['btrfs', 'send'] + flags
     if prevsnapshot:
         srccmd += ['-p', prevsnapshot]
-    srccmd += [srcloc]
+    srccmd += [src]
 
-    destcmd = ['btrfs', 'receive'] + flags + [destloc]
+    if dest_cmd:
+        destcmd = dest
+    else:
+        destcmd = ['btrfs', 'receive'] + flags + [dest]
 
     # check whether pv is available
     try:
@@ -113,7 +116,8 @@ def send_snapshot(srcloc, destloc, prevsnapshot=None, debug=False):
         pipe = subprocess.Popen(pvcmd, stdin=pipe.stdout,
                                 stdout=subprocess.PIPE)
     try:
-        output = subprocess.check_call(destcmd, stdin=pipe.stdout)
+        output = subprocess.check_call(destcmd, stdin=pipe.stdout,
+                                       shell=dest_cmd)
     except subprocess.CalledProcessError:
         print("Error on command:", destcmd, file=sys.stderr)
         return None
@@ -171,6 +175,10 @@ if __name__ == "__main__":
                              "either relative to source or absolute")
     parser.add_argument('--snapshot-prefix',
                         help="prefix for snapshot names")
+    parser.add_argument('--dest-cmd', action='store_true',
+                        help="interpret the dest argument as a command for "
+                             "receiving snapshots instead of a directory; "
+                             "this option makes --num-backups ineffective")
     parser.add_argument('source', help="subvolume to backup")
     parser.add_argument('dest', help="destination to send backups to")
     args = parser.parse_args()
@@ -184,17 +192,24 @@ if __name__ == "__main__":
         print("backup source does not seem to be a btrfs subvolume")
         sys.exit(1)
 
-    if os.path.exists(args.dest):
-        backuploc = os.path.abspath(args.dest)
+    if args.dest_cmd:
+        backuploc = args.dest
+        NUM_BACKUPS = 0
     else:
-        print("backup destination does not exist", file=sys.stderr)
-        sys.exit(1)
-    if not args.skip_fs_checks and not is_btrfs(backuploc):
-        print("backup destination does not seem to be on a btrfs file system")
-        sys.exit(1)
-
-    NUM_BACKUPS = args.num_backups
-    print("Num backups:", NUM_BACKUPS, file=sys.stderr)
+        backuploc = os.path.abspath(args.dest)
+        # Ensure backup directory exists
+        if not os.path.exists(backuploc):
+            try:
+                os.makedirs(backuploc)
+            except Exception as e:
+                print("Error creating new backup location:", e, file=sys.stderr)
+                sys.exit(1)
+        if not args.skip_fs_checks and not is_btrfs(backuploc):
+            print("Destination does not seem to be on a btrfs file system",
+                  file=sys.stderr)
+            sys.exit(1)
+        NUM_BACKUPS = args.num_backups
+        print("Num backups:", NUM_BACKUPS, file=sys.stderr)
 
     if args.snapshot_folder:
         SNAPSHOTDIR = args.snapshot_folder
@@ -210,14 +225,6 @@ if __name__ == "__main__":
         snapprefix = ''
         LASTNAME = '.latest'
     latest = os.path.join(SNAPSHOTDIR, LASTNAME)
-
-    # Ensure backup directory exists
-    if not os.path.exists(backuploc):
-        try:
-            os.makedirs(backuploc)
-        except:
-            print("error creating new backup location:", str(backuploc), file=sys.stderr)
-            sys.exit(1)
 
     # Ensure snapshot directory exists
     snapdir = os.path.join(sourceloc, SNAPSHOTDIR)
@@ -241,18 +248,21 @@ if __name__ == "__main__":
         print("Error on command:", cmd, file=sys.stderr)
 
     print('Snapshot successful; sending backup', file=sys.stderr)
-    print(' - from        ', sourcesnap, file=sys.stderr)
-    print(' - to          ', backuploc, file=sys.stderr)
+    print(' - from         ', sourcesnap, file=sys.stderr)
+    if args.dest_cmd:
+        print(' - receive cmd: ', backuploc, file=sys.stderr)
+    else:
+        print(' - to           ', backuploc, file=sys.stderr)
 
     # Now we need to send the snapshot (incrementally, if possible)
     real_latest = os.path.realpath(latest)
     if os.path.exists(real_latest):
-        print(' - using parent', real_latest, file=sys.stderr)
+        print(' - using parent:', real_latest, file=sys.stderr)
     else:
         real_latest = None
 
     result = send_snapshot(sourcesnap, backuploc, prevsnapshot=real_latest,
-                           debug=args.debug)
+                           dest_cmd=args.dest_cmd, debug=args.debug)
     if result != 0:
         print("Error during btrfs send / receive, aborting", file=sys.stderr)
         sys.exit(1)
@@ -272,5 +282,6 @@ if __name__ == "__main__":
     print('Backup complete', file=sys.stderr)
 
     # cleanup backups > NUM_BACKUPS in backup target
-    if (NUM_BACKUPS > 0):
-        delete_old_backups(backuploc, NUM_BACKUPS, snapprefix)
+    if not args.dest_cmd:
+        if (NUM_BACKUPS > 0):
+            delete_old_backups(backuploc, NUM_BACKUPS, snapprefix)
