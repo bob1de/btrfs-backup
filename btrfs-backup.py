@@ -180,11 +180,14 @@ if __name__ == "__main__":
                              "before deleting them; allows regular users "
                              "to delete subvolumes when mount option "
                              "user_subvol_rm_allowed is enabled")
+    parser.add_argument('-s', '--sync', action='store_true',
+                        help="run 'btrfs subvolume sync' after deleting "
+                             "subvolumes")
     parser.add_argument('-l', '--latest-only', action='store_true',
                         help="only keep latest snapshot on source filesystem")
     parser.add_argument('-n', '--num-backups', type=int, default=0,
                         help="only keep latest n backups at destination")
-    parser.add_argument('-s', '--snapshot-folder',
+    parser.add_argument('-f', '--snapshot-folder',
                         help="snapshot folder in source filesystem; "
                              "either relative to source or absolute")
     parser.add_argument('-p', '--snapshot-prefix',
@@ -238,15 +241,19 @@ if __name__ == "__main__":
     if args.snapshot_prefix:
         snapprefix = args.snapshot_prefix
         lastname = '.' + snapprefix + '_latest'
-        print("Snapshot prefix:", snapprefix)
     else:
         snapprefix = ''
         lastname = '.latest'
-        print("Snapshot prefix: (none)")
     latest = os.path.join(snapdir, lastname)
+    print("Snapshot prefix:",
+          args.snapshot_prefix if args.snapshot_prefix else "None")
 
+    print("Skip filesystem checks:", args.skip_fs_checks)
+    print("Convert subvolumes to read-write before deletion:", args.convert_rw)
+    print("Run 'btrfs subvolume sync' afterwards:", args.sync)
     print("Keep latest snapshot only:", args.latest_only)
-    print("Number of backups to keep:", args.num_backups)
+    print("Number of backups to keep:",
+          args.num_backups if args.num_backups > 0 else "Any")
 
     # Ensure snapshot directory exists
     if not os.path.exists(snapdir):
@@ -316,6 +323,20 @@ if __name__ == "__main__":
     if not args.dest_cmd and args.num_backups > 0:
         delete_old_backups(dest, args.num_backups, snapprefix,
                            convert_rw=args.convert_rw)
+
+    # run 'btrfs subvolume sync'
+    if args.sync:
+        print("-" * 80)
+        locations = [source]
+        if not args.dest_cmd:
+            locations.append(dest)
+        for location in locations:
+            print("Running 'btrfs subvolume sync' for", location, "...")
+            cmd = ['btrfs', 'subvolume', 'sync', location]
+            try:
+                subprocess.check_call(cmd)
+            except subprocess.CalledProcessError:
+                print("Error on command:", cmd, file=sys.stderr)
 
     print("-" * 80)
     print("Done!")
