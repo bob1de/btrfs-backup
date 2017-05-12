@@ -163,19 +163,19 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="incremental btrfs backup")
     parser.add_argument('-d', '--debug', action='store_true',
                         help="enable debugging on btrfs send / receive")
-    parser.add_argument('--latest-only', action='store_true',
-                        help="only keep latest snapshot on source filesystem")
-    parser.add_argument('--num-backups', type=int, default=0,
-                        help="only keep latest n backups at destination")
-    parser.add_argument('--skip-fs-checks', action='store_true',
+    parser.add_argument('-C', '--skip-fs-checks', action='store_true',
                         help="don't check whether source / destination is a "
                              "btrfs subvolume / filesystem")
-    parser.add_argument('--snapshot-folder',
+    parser.add_argument('-l', '--latest-only', action='store_true',
+                        help="only keep latest snapshot on source filesystem")
+    parser.add_argument('-n', '--num-backups', type=int, default=0,
+                        help="only keep latest n backups at destination")
+    parser.add_argument('-s', '--snapshot-folder',
                         help="snapshot folder in source filesystem; "
                              "either relative to source or absolute")
-    parser.add_argument('--snapshot-prefix',
+    parser.add_argument('-p', '--snapshot-prefix',
                         help="prefix for snapshot names")
-    parser.add_argument('--dest-cmd', action='store_true',
+    parser.add_argument('-c', '--dest-cmd', action='store_true',
                         help="interpret the dest argument as a command for "
                              "receiving snapshots instead of a directory; "
                              "this option makes --num-backups ineffective")
