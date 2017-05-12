@@ -99,7 +99,19 @@ def send_snapshot(srcloc, destloc, prevsnapshot=None, debug=False):
 
     destcmd = ['btrfs', 'receive'] + flags + [destloc]
 
+    # check whether pv is available
+    try:
+        subprocess.check_output(['pv', '--help'])
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        pv = False
+    else:
+        pv = True
+
     pipe = subprocess.Popen(srccmd, stdout=subprocess.PIPE)
+    if pv:
+        pvcmd = ['pv']
+        pipe = subprocess.Popen(pvcmd, stdin=pipe.stdout,
+                                stdout=subprocess.PIPE)
     try:
         output = subprocess.check_call(destcmd, stdin=pipe.stdout)
     except subprocess.CalledProcessError:
@@ -141,41 +153,43 @@ def delete_snapshot(snaploc):
     except subprocess.CalledProcessError:
         print("Error on command:", cmd, file=sys.stderr)
 
+
 if __name__ == "__main__":
     # Parse command line arguments
     parser = argparse.ArgumentParser(description="incremental btrfs backup")
+    parser.add_argument('-d', '--debug', action='store_true',
+                        help="enable debugging on btrfs send / receive")
     parser.add_argument('--latest-only', action='store_true',
                         help="only keep latest snapshot on source filesystem")
-    parser.add_argument('-d', '--debug', action='store_true',
-                        help="enable btrfs debugging on send/receive")
-    parser.add_argument('--skip-filesystem-checks', action='store_true',
-                        help="don't check whether source / backup is a "
-                             "btrfs subvolume / filesystem")
     parser.add_argument('--num-backups', type=int, default=0,
-                        help="only store given number of backups in backup folder")
+                        help="only keep latest n backups at destination")
+    parser.add_argument('--skip-fs-checks', action='store_true',
+                        help="don't check whether source / destination is a "
+                             "btrfs subvolume / filesystem")
     parser.add_argument('--snapshot-folder',
-                        help="snapshot folder in source filesystem")
+                        help="snapshot folder in source filesystem; "
+                             "either relative to source or absolute")
     parser.add_argument('--snapshot-prefix',
-                        help="prefix of snapshot name")
-    parser.add_argument('source', help="filesystem to backup")
-    parser.add_argument('backup', help="destination to send backups to")
+                        help="prefix for snapshot names")
+    parser.add_argument('source', help="subvolume to backup")
+    parser.add_argument('dest', help="destination to send backups to")
     args = parser.parse_args()
 
     if os.path.exists(args.source):
-        sourceloc = args.source
+        sourceloc = os.path.abspath(args.source)
     else:
         print("backup source does not exist", file=sys.stderr)
         sys.exit(1)
-    if not args.skip_filesystem_checks and not is_subvolume(sourceloc):
+    if not args.skip_fs_checks and not is_subvolume(sourceloc):
         print("backup source does not seem to be a btrfs subvolume")
         sys.exit(1)
 
-    if os.path.exists(args.backup):
-        backuploc = args.backup
+    if os.path.exists(args.dest):
+        backuploc = os.path.abspath(args.dest)
     else:
         print("backup destination does not exist", file=sys.stderr)
         sys.exit(1)
-    if not args.skip_filesystem_checks and not is_btrfs(backuploc):
+    if not args.skip_fs_checks and not is_btrfs(backuploc):
         print("backup destination does not seem to be on a btrfs file system")
         sys.exit(1)
 
