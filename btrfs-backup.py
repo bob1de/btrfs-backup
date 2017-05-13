@@ -25,28 +25,29 @@
 # CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
+
 import sys
 import os
-import logging
 import time
 import subprocess
+import logging
 import argparse
 
 
-TIMEFORMAT = '%Y%m%d-%H%M%S'
+DATEFORMAT = '%Y%m%d-%H%M%S'
 
 def date2str(timestamp=None, format=None):
     if timestamp is None:
         timestamp = time.localtime()
     if format is None:
-        format = TIMEFORMAT
+        format = DATEFORMAT
     return time.strftime(format, timestamp)
 
 def str2date(timestring=None, format=None):
     if timestring is None:
         return time.localtime()
     if format is None:
-        format = TIMEFORMAT
+        format = DATEFORMAT
     return time.strptime(timestring, format)
 
 def is_btrfs(path):
@@ -83,7 +84,7 @@ def new_snapshot(disk, snapshotdir, snapshotprefix, readonly=True):
     try:
         subprocess.check_output(cmd)
     except subprocess.CalledProcessError:
-        print("Error on command:", cmd, file=sys.stderr)
+        logging.error("Error on command: {}".format(cmd))
         return None
     return snaploc
 
@@ -94,7 +95,12 @@ def send_snapshot(src, dest, prevsnapshot=None, dest_cmd=False, debug=False,
     else:
         flags = []
 
+    loglevel = logging.getLogger().getEffectiveLevel()
+
     srccmd = ['btrfs', 'send'] + flags
+    # from WARNING level onwards, pass --quiet to btrfs send
+    if loglevel >= logging.WARNING:
+        srccmd += ['--quiet']
     if prevsnapshot:
         srccmd += ['-p', prevsnapshot]
     srccmd += [src]
@@ -119,9 +125,11 @@ def send_snapshot(src, dest, prevsnapshot=None, dest_cmd=False, debug=False,
         pvcmd = ['pv']
         pipe = subprocess.Popen(pvcmd, stdin=pipe.stdout,
                                 stdout=subprocess.PIPE)
+    # from WARNING level onwards, hide stdout
+    stdout = subprocess.DEVNULL if loglevel >= logging.WARNING else None
     try:
-        output = subprocess.check_call(destcmd, stdin=pipe.stdout,
-                                       shell=dest_cmd)
+        subprocess.check_call(destcmd, stdin=pipe.stdout, stdout=stdout,
+                              shell=dest_cmd)
     except subprocess.CalledProcessError:
         logging.error("Error on command: {}".format(destcmd))
         return None
@@ -177,6 +185,8 @@ if __name__ == "__main__":
     parser.add_argument('-v', '--verbosity', default='info',
                         choices=['debug', 'info', 'warning', 'error'],
                         help="set verbosity level")
+    parser.add_argument('-q', '--quiet', action='store_true',
+                        help="shortcut for --no-progress --verbosity warning")
     parser.add_argument('-d', '--btrfs-debug', action='store_true',
                         help="enable debugging on btrfs send / receive")
     parser.add_argument('-P', '--no-progress', action='store_true',
@@ -208,6 +218,10 @@ if __name__ == "__main__":
     parser.add_argument('source', help="subvolume to backup")
     parser.add_argument('dest', help="destination to send backups to")
     args = parser.parse_args()
+
+    if args.quiet:
+        args.no_progress = True
+        args.verbosity = "warning"
 
     logging.basicConfig(format="%(asctime)s  [%(levelname)-5s]  %(message)s",
                         datefmt="%H:%M:%S",
