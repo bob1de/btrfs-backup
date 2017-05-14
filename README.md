@@ -3,8 +3,8 @@ btrfs-backup
 
 About
 -----
-This script supports incremental backups for ``btrfs`` using ``snapshots``
-and ``send/receive`` between filesystems.  Think of it as a really basic
+This script supports incremental backups for *btrfs* using *snapshots*
+and *send/receive* between filesystems. Think of it as a really basic
 version of Time Machine.
 
 Backups can be stored either locally or remotely (e.g. via SSH).
@@ -24,12 +24,13 @@ features and some fixes.
 
 Features
 --------
-* Initial creation of full backups using ``btrfs send / receive``
+* Initial creation of full backups
 * Incremental backups on subsequent runs
-* Storing backups locally, including deletion of old ones if desired
-* Alternatively, the output of ``btrfs send`` may be piped to a custom
-  command, what allows for storing backups on a remote server (e.g. via
-  SSH)
+* Different backup storage engines:
+  * Local storage, including deletion of old backups if desired
+  * Remote storage via SSH
+  * Custom storage: Alternatively, the output of ``btrfs send`` may be
+    piped to a custom shell command
 * Creation of backups without root privileges, if some special conditions
   are met
 * Detailled logging output with configurable log level
