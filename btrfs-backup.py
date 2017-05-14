@@ -39,23 +39,28 @@ import endpoint
 
 
 def send_snapshot(src_endpoint, dest_endpoint, sourcesnap, no_progress=False):
-    logging.info(util.log_heading("Sending ..."))
-    logging.info("  From:         {}".format(sourcesnap))
-    logging.info("  To:           {}".format(dest_endpoint))
-
     # Now we need to send the snapshot (incrementally, if possible)
     latest_snapshot = src_endpoint.get_latest_snapshot()
+    logging.info("From:         {}".format(sourcesnap))
+    logging.info("To:           {}".format(dest_endpoint))
     if latest_snapshot:
-        logging.info("  Using parent: {}".format(latest_snapshot))
+        logging.info("Using parent: {}".format(latest_snapshot))
+    else:
+        logging.info("No previous snapshot found, sending full backup.")
 
     pv = False
     if not no_progress:
         # check whether pv is available
+        logging.debug("Checking for pv ...")
+        cmd = ["pv", "--help"]
+        logging.debug("Executing: {}".format(cmd))
         try:
-            subprocess.check_output(['pv', '--help'])
-        except (FileNotFoundError, subprocess.CalledProcessError):
-            pass
+            subprocess.check_output(cmd)
+        except (FileNotFoundError, subprocess.CalledProcessError) as e:
+            logging.debug("  -> got exception: {}".format(e))
+            logging.debug("  -> pv is not available")
         else:
+            logging.debug("  -> pv is available")
             pv = True
 
     pipes = []
@@ -63,6 +68,7 @@ def send_snapshot(src_endpoint, dest_endpoint, sourcesnap, no_progress=False):
 
     if pv:
         cmd = ["pv"]
+        logging.debug("Executing: {}".format(cmd))
         pipes.append(subprocess.Popen(cmd, stdin=pipes[-1].stdout,
                                       stdout=subprocess.PIPE))
 
@@ -70,10 +76,12 @@ def send_snapshot(src_endpoint, dest_endpoint, sourcesnap, no_progress=False):
 
     pids = [pipe.pid for pipe in pipes]
     while pids:
-        pid, result = os.wait()
+        pid, retcode = os.wait()
         if pid in pids:
+            logging.debug("  -> PID {} exited with return code "
+                          "{}".format(pid, retcode))
             pids.remove(pid)
-        if result != 0:
+        if retcode != 0:
             logging.error("Error during btrfs send / receive")
             raise util.AbortError()
 
@@ -137,6 +145,7 @@ def main():
 
     logging.info(util.log_heading("Started at {}".format(time.ctime())))
 
+    logging.debug(util.log_heading("Settings"))
     if args.snapshot_folder:
         snapdir = args.snapshot_folder
     else:
@@ -159,6 +168,7 @@ def main():
     logging.debug("Keep latest snapshot only: {}".format(args.latest_only))
     logging.debug("Number of backups to keep: {}".format(
         args.num_backups if args.num_backups > 0 else "Any"))
+    logging.debug("Extra SSH config options: {}".format(args.ssh_opt))
 
     # kwargs that are common between all endpoints
     endpoint_kwargs = {"snapprefix": snapprefix}
@@ -209,15 +219,19 @@ def main():
             subvol_check=False,
             **endpoint_kwargs)
 
+    logging.info(util.log_heading("Preparing endpoints ..."))
     src_endpoint.prepare()
     dest_endpoint.prepare()
 
     # First we need to create a new snapshot on the source disk
+    logging.info(util.log_heading("Snapshotting ..."))
     sourcesnap = src_endpoint.snapshot()
 
     # Need to sync
+    logging.info(util.log_heading("Syncing disks ..."))
     src_endpoint.sync()
 
+    logging.info(util.log_heading("Sending ..."))
     send_snapshot(src_endpoint, dest_endpoint, sourcesnap,
                   no_progress=args.no_progress)
     logging.info(util.log_heading("Backup complete!"))
