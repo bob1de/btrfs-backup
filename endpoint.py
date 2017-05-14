@@ -143,12 +143,15 @@ class LocalEndpoint(Endpoint):
         if self.snapdir is not None:
             dirs.append(self.snapdir)
         for d in dirs:
-            if not os.path.exists(d):
+            if os.path.exists(d):
+                logging.debug("Directory exists: {}".format(d))
+            else:
+                logging.info("Creating directory: {}".format(d))
                 try:
                     os.makedirs(d)
                 except Exception as e:
-                    logging.error("Error creating new location {}: {}".format(
-                        d, e))
+                    logging.error("Error creating new location {}: "
+                                  "{}".format(d, e))
                     raise util.AbortError()
         if self.fstype_check and not util.is_btrfs(self.path):
             logging.error("{} does not seem to be on a btrfs "
@@ -162,19 +165,28 @@ class LocalEndpoint(Endpoint):
     @require_snapdir
     def get_latest_snapshot(self):
         latest = os.path.join(self.snapdir, self.lastname)
-        real_latest = os.path.realpath(latest)
-        if os.path.exists(real_latest):
-            return os.path.basename(real_latest)
+        if os.path.islink(latest):
+            real_latest = os.path.realpath(latest)
+            logging.debug("Symlink {} points to {}".format(latest, real_latest))
+            if os.path.exists(real_latest):
+                logging.debug("  -> Link target exists")
+                return os.path.basename(real_latest)
+            else:
+                logging.debug("  -> Link target doesn't exist")
+        else:
+            logging.debug("Symlink {} not found".format(latest))
         return None
 
     @require_snapdir
     def set_latest_snapshot(self, snapname):
         latest = os.path.join(self.snapdir, self.lastname)
         if os.path.islink(latest):
+            logging.debug("Unlinking: {}".format(latest))
             os.unlink(latest)
         elif os.path.exists(latest):
             logging.error("Confusion: '{}' should be a symlink".format(latest))
         # Make .latest point to snapname - use relative symlink
+        logging.debug("Symlinking: {} -> {}".format(latest, snapname))
         os.symlink(snapname, latest)
         logging.info("Latest snapshot is now: {}".format(snapname))
 
@@ -182,12 +194,12 @@ class LocalEndpoint(Endpoint):
     def snapshot(self, readonly=True):
         snapname = self.snapprefix + util.date2str()
         snaploc = os.path.join(self.snapdir, snapname)
-        logging.info(util.log_heading("Snapshotting ..."))
-        logging.info("  {} -> {}".format(self.path, snaploc))
+        logging.info("{} -> {}".format(self.path, snaploc))
         cmd = ['btrfs', 'subvolume', 'snapshot']
         if readonly:
             cmd += ['-r']
         cmd += [self.path, snaploc]
+        logging.debug("Executing: {}".format(cmd))
         try:
             subprocess.check_output(cmd)
         except subprocess.CalledProcessError:
@@ -207,6 +219,7 @@ class LocalEndpoint(Endpoint):
         if parent:
             cmd += ["-p", os.path.join(self.snapdir, parent)]
         cmd += [os.path.join(self.snapdir, snapname)]
+        logging.debug("Executing: {}".format(cmd))
         return subprocess.Popen(cmd, stdout=subprocess.PIPE)
 
     def receive(self, stdin):
@@ -216,21 +229,21 @@ class LocalEndpoint(Endpoint):
         # from WARNING level onwards, hide stdout
         loglevel = logging.getLogger().getEffectiveLevel()
         stdout = subprocess.DEVNULL if loglevel >= logging.WARNING else None
+        logging.debug("Executing: {}".format(cmd))
         return subprocess.Popen(cmd, stdin=stdin, stdout=stdout)
 
     def sync(self):
         """Calls 'sync'."""
-        logging.info(util.log_heading("Syncing disks ..."))
         cmd = ['sync']
+        logging.debug("Executing: {}".format(cmd))
         try:
             subprocess.check_output(cmd)
         except subprocess.CalledProcessError:
             logging.error("Error on command: {}".format(cmd))
 
     def subvolume_sync(self):
-        logging.info("Running 'btrfs subvolume sync' for {} "
-                     "...".format(self.path))
         cmd = ["btrfs", "subvolume", "sync", self.path]
+        logging.debug("Executing: {}".format(cmd))
         try:
             subprocess.check_output(cmd)
         except subprocess.CalledProcessError:
@@ -239,15 +252,17 @@ class LocalEndpoint(Endpoint):
     def delete_snapshot(self, location, convert_rw=False):
         logging.info("Removing snapshot: {}".format(location))
         if convert_rw:
-            logging.info("  converting to read-write ...")
+            logging.debug("  converting to read-write ...")
             cmd = ["btrfs", "property", "set", "-ts", location, "ro", "false"]
+            logging.debug("Executing: {}".format(cmd))
             try:
                 subprocess.check_output(cmd)
             except subprocess.CalledProcessError:
                 logging.error("Error on command: {}".format(cmd))
                 return None
-        logging.info("  deleting ...")
+        logging.debug("  deleting ...")
         cmd = ["btrfs", "subvolume", "delete", location]
+        logging.debug("Executing: {}".format(cmd))
         try:
             subprocess.check_output(cmd)
         except subprocess.CalledProcessError:
@@ -271,6 +286,7 @@ class ShellEndpoint(Endpoint):
         # from WARNING level onwards, hide stdout
         loglevel = logging.getLogger().getEffectiveLevel()
         stdout = subprocess.DEVNULL if loglevel >= logging.WARNING else None
+        logging.debug("Executing: {}".format(self.cmd))
         return subprocess.Popen(self.cmd, stdin=stdin, stdout=stdout,
                                 shell=True)
 
@@ -307,5 +323,5 @@ class SSHEndpoint(Endpoint):
         # from WARNING level onwards, hide stdout
         loglevel = logging.getLogger().getEffectiveLevel()
         stdout = subprocess.DEVNULL if loglevel >= logging.WARNING else None
-        logging.debug("Executing subprocess: {}".format(cmd))
+        logging.debug("Executing: {}".format(cmd))
         return subprocess.Popen(cmd, stdin=stdin, stdout=stdout)
