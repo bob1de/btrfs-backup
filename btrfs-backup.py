@@ -32,83 +32,21 @@ import time
 import subprocess
 import logging
 import argparse
+import urllib.parse
+
+import util
+import endpoint
 
 
-DATEFORMAT = '%Y%m%d-%H%M%S'
+def send_snapshot(src_endpoint, dest_endpoint, sourcesnap, no_progress=False):
+    logging.info(util.log_heading("Sending ..."))
+    logging.info("  From:         {}".format(sourcesnap))
+    logging.info("  To:           {}".format(dest_endpoint))
 
-def date2str(timestamp=None, format=None):
-    if timestamp is None:
-        timestamp = time.localtime()
-    if format is None:
-        format = DATEFORMAT
-    return time.strftime(format, timestamp)
-
-def str2date(timestring=None, format=None):
-    if timestring is None:
-        return time.localtime()
-    if format is None:
-        format = DATEFORMAT
-    return time.strptime(timestring, format)
-
-def is_btrfs(path):
-    """Checks whether path is inside a btrfs file system"""
-    path = os.path.normpath(os.path.abspath(path))
-    best_match = ''
-    best_match_fstype = ''
-    for line in open('/proc/mounts'):
-        try:
-            mountpoint, fstype = line.split(' ')[1:3]
-        except ValueError:
-            continue
-        if path.startswith(mountpoint) and len(mountpoint) > len(best_match):
-            best_match = mountpoint
-            best_match_fstype = fstype
-    return best_match_fstype == 'btrfs'
-
-def is_subvolume(path):
-    """Checks whether the given path is a btrfs subvolume."""
-    if not is_btrfs(path):
-        return False
-    # subvolumes always have inode 256
-    st = os.stat(path)
-    return st.st_ino == 256
-
-def new_snapshot(disk, snapshotdir, snapshotprefix, readonly=True):
-    snapname = snapshotprefix + date2str()
-    snaploc = os.path.join(snapshotdir, snapname)
-    cmd = ['btrfs', 'subvolume', 'snapshot']
-    if readonly:
-        cmd += ['-r']
-    cmd += [disk, snaploc]
-
-    try:
-        subprocess.check_output(cmd)
-    except subprocess.CalledProcessError:
-        logging.error("Error on command: {}".format(cmd))
-        return None
-    return snaploc
-
-def send_snapshot(src, dest, prevsnapshot=None, dest_cmd=False, debug=False,
-                  no_progress=False):
-    if debug:
-        flags = ['-vv']
-    else:
-        flags = []
-
-    loglevel = logging.getLogger().getEffectiveLevel()
-
-    srccmd = ['btrfs', 'send'] + flags
-    # from WARNING level onwards, pass --quiet to btrfs send
-    if loglevel >= logging.WARNING:
-        srccmd += ['--quiet']
-    if prevsnapshot:
-        srccmd += ['-p', prevsnapshot]
-    srccmd += [src]
-
-    if dest_cmd:
-        destcmd = dest
-    else:
-        destcmd = ['btrfs', 'receive'] + flags + [dest]
+    # Now we need to send the snapshot (incrementally, if possible)
+    latest_snapshot = src_endpoint.get_latest_snapshot()
+    if latest_snapshot:
+        logging.info("  Using parent: {}".format(latest_snapshot))
 
     pv = False
     if not no_progress:
@@ -120,68 +58,30 @@ def send_snapshot(src, dest, prevsnapshot=None, dest_cmd=False, debug=False,
         else:
             pv = True
 
-    pipe = subprocess.Popen(srccmd, stdout=subprocess.PIPE)
+    pipes = []
+    pipes.append(src_endpoint.send(sourcesnap, parent=latest_snapshot))
+
     if pv:
-        pvcmd = ['pv']
-        pipe = subprocess.Popen(pvcmd, stdin=pipe.stdout,
-                                stdout=subprocess.PIPE)
-    # from WARNING level onwards, hide stdout
-    stdout = subprocess.DEVNULL if loglevel >= logging.WARNING else None
-    try:
-        subprocess.check_call(destcmd, stdin=pipe.stdout, stdout=stdout,
-                              shell=dest_cmd)
-    except subprocess.CalledProcessError:
-        logging.error("Error on command: {}".format(destcmd))
-        return None
-    return pipe.wait()
+        cmd = ["pv"]
+        pipes.append(subprocess.Popen(cmd, stdin=pipes[-1].stdout,
+                                      stdout=subprocess.PIPE))
 
-def delete_old_backups(backuploc, max_num_backups, snapshotprefix='',
-                       convert_rw=False):
-    """ Delete old backup directories in backup target folder based on their date.
-        Warning: This function will delete btrfs snapshots in target folder based on the parameter
-        max_num_backups!
-    """
+    pipes.append(dest_endpoint.receive(pipes[-1].stdout))
 
-    time_objs = []
-    for item in os.listdir(backuploc):
-        if os.path.isdir(os.path.join(backuploc, item)) and \
-           item.startswith(snapshotprefix):
-            time_str = item[len(snapshotprefix):]
-            try:
-                time_objs.append(str2date(time_str))
-            except ValueError:
-                # no valid name for current prefix + time string
-                continue
-
-    # sort by date, then time;
-    time_objs.sort()
-
-    while time_objs and len(time_objs) > max_num_backups:
-        # delete oldest backup snapshot
-        backup_to_remove = os.path.join(backuploc, snapprefix +
-                                        date2str(time_objs.pop(0)))
-        delete_snapshot(backup_to_remove, convert_rw=convert_rw)
-
-def delete_snapshot(snaploc, convert_rw=False):
-    if convert_rw:
-        logging.info("Converting snapshot to read-write: {}".format(snaploc))
-        cmd = ['btrfs', 'property', 'set', '-ts', snaploc, 'ro', 'false']
-        try:
-            subprocess.check_output(cmd)
-        except subprocess.CalledProcessError:
-            logging.error("Error on command: {}".format(cmd))
-            return None
-    logging.info("Removing snapshot: {}".format(snaploc))
-    cmd = ['btrfs', 'subvolume', 'delete', snaploc]
-    try:
-        subprocess.check_output(cmd)
-    except subprocess.CalledProcessError:
-        logging.error("Error on command: {}".format(cmd))
+    pids = [pipe.pid for pipe in pipes]
+    while pids:
+        pid, result = os.wait()
+        if pid in pids:
+            pids.remove(pid)
+        if result != 0:
+            logging.error("Error during btrfs send / receive")
+            raise util.AbortError()
 
 
-if __name__ == "__main__":
+def main():
     # Parse command line arguments
-    parser = argparse.ArgumentParser(description="incremental btrfs backup")
+    parser = argparse.ArgumentParser(description="incremental btrfs backup",
+                                     formatter_class=util.ArgparseSmartFormatter)
     parser.add_argument('-v', '--verbosity', default='info',
                         choices=['debug', 'info', 'warning', 'error'],
                         help="set verbosity level")
@@ -205,18 +105,26 @@ if __name__ == "__main__":
     parser.add_argument('-l', '--latest-only', action='store_true',
                         help="only keep latest snapshot on source filesystem")
     parser.add_argument('-n', '--num-backups', type=int, default=0,
-                        help="only keep latest n backups at destination")
+                        help="only keep latest n backups at destination; "
+                             "this option is only supported for local storage")
     parser.add_argument('-f', '--snapshot-folder',
                         help="snapshot folder in source filesystem; "
                              "either relative to source or absolute")
     parser.add_argument('-p', '--snapshot-prefix',
                         help="prefix for snapshot names")
-    parser.add_argument('-c', '--dest-cmd', action='store_true',
-                        help="interpret the dest argument as a command for "
-                             "receiving snapshots instead of a directory; "
-                             "this option makes --num-backups ineffective")
-    parser.add_argument('source', help="subvolume to backup")
-    parser.add_argument('dest', help="destination to send backups to")
+    parser.add_argument("--ssh-opt", action="append",
+                        help="N|pass extra ssh_config options to ssh(1);\n"
+                             "example: '--ssh-opt Cipher=aes256-ctr --ssh-opt "
+                             "IdentityFile=/root/id_rsa'\n"
+                             "would result in 'ssh -o Cipher=aes256-ctr "
+                             "-o IdentityFile=/root/id_rsa'")
+    parser.add_argument("source", help="Subvolume to backup.")
+    parser.add_argument("dest",
+                        help="N|Destination to send backups to.\n"
+                             "The following schemes are possible:\n"
+                             " - /path/to/backups\n"
+                             " - 'shell://cat > some-file'\n"
+                             " - ssh://[user@]host[:port]/path/to/backups")
     args = parser.parse_args()
 
     if args.quiet:
@@ -227,51 +135,18 @@ if __name__ == "__main__":
                         datefmt="%H:%M:%S",
                         level=getattr(logging, args.verbosity.upper()))
 
-    logging.info("-" * 50)
-    logging.info("Started btrfs-backup at {}".format(time.ctime()))
-
-    source = os.path.abspath(args.source)
-    logging.debug("Source: {}".format(source))
-    if not os.path.exists(source):
-        logging.error("Backup source does not exist")
-        sys.exit(1)
-    if not args.skip_fs_checks and not is_subvolume(source):
-        logging.error("Backup source does not seem to be a btrfs subvolume")
-        sys.exit(1)
-
-    if args.dest_cmd:
-        dest = args.dest
-        logging.debug("Destination command: {}".format(dest))
-    else:
-        dest = os.path.abspath(args.dest)
-        logging.debug("Destination: {}".format(dest))
-        # Ensure backup directory exists
-        if not os.path.exists(dest):
-            try:
-                os.makedirs(dest)
-            except Exception as e:
-                logging.error("Error creating new backup location: {}".format(e))
-                sys.exit(1)
-        if not args.skip_fs_checks and not is_btrfs(dest):
-            logging.error("Destination does not seem to be on a btrfs "
-                          "filesystem")
-            sys.exit(1)
+    logging.info(util.log_heading("Started at {}".format(time.ctime())))
 
     if args.snapshot_folder:
         snapdir = args.snapshot_folder
     else:
         snapdir = 'snapshot'
-    if not snapdir.startswith('/'):
-        snapdir = os.path.join(source, snapdir)
     logging.debug("Snapshot folder: {}".format(snapdir))
 
     if args.snapshot_prefix:
         snapprefix = args.snapshot_prefix
-        lastname = '.' + snapprefix + '_latest'
     else:
         snapprefix = ''
-        lastname = '.latest'
-    latest = os.path.join(snapdir, lastname)
     logging.debug("Snapshot prefix: {}".format(
         args.snapshot_prefix if args.snapshot_prefix else None))
 
@@ -285,92 +160,90 @@ if __name__ == "__main__":
     logging.debug("Number of backups to keep: {}".format(
         args.num_backups if args.num_backups > 0 else "Any"))
 
-    # Ensure snapshot directory exists
-    if not os.path.exists(snapdir):
-        try:
-            os.makedirs(snapdir)
-        except Exception as e:
-            logging.error("Error creating snapshot folder: {}".format(e))
-            sys.exit(1)
+    # kwargs that are common between all endpoints
+    endpoint_kwargs = {"snapprefix": snapprefix}
 
-    logging.debug("-" * 50)
+    src_path = os.path.abspath(args.source)
+    logging.debug("Source: {}".format(src_path))
+    src_endpoint = endpoint.LocalEndpoint(
+        path=src_path,
+        snapdir=snapdir,
+        btrfs_debug=args.btrfs_debug,
+        fstype_check=False,
+        subvol_check=not args.skip_fs_checks,
+        **endpoint_kwargs)
+
+    # parse destination string
+    dest = args.dest
+    if dest.startswith("shell://"):
+        dest_type = "shell"
+        dest_cmd = dest[8:]
+    elif dest.startswith("ssh://"):
+        dest_type = "ssh"
+        parsed_dest = urllib.parse.urlparse(dest)
+        dest_path = parsed_dest.path
+        if parsed_dest.query:
+            dest_path += "?" + parsed_dest.query
+    else:
+        dest_type = "local"
+        dest_path = dest
+
+    logging.debug("Destination type: {}".format(dest_type))
+    logging.debug("Destination: {}".format(dest))
+    if dest_type == "shell":
+        dest_endpoint = endpoint.ShellEndpoint(cmd=dest_cmd, **endpoint_kwargs)
+    elif dest_type == "ssh":
+        dest_endpoint = endpoint.SSHEndpoint(
+            username=parsed_dest.username,
+            hostname=parsed_dest.hostname,
+            port=parsed_dest.port or 22,
+            path=dest_path,
+            ssh_opts=args.ssh_opt,
+            btrfs_debug=args.btrfs_debug,
+            **endpoint_kwargs)
+    else:
+        dest_endpoint = endpoint.LocalEndpoint(
+            path=dest_path,
+            btrfs_debug=args.btrfs_debug,
+            fstype_check=not args.skip_fs_checks,
+            subvol_check=False,
+            **endpoint_kwargs)
+
+    src_endpoint.prepare()
+    dest_endpoint.prepare()
 
     # First we need to create a new snapshot on the source disk
-    logging.info("Creating new snapshot ...")
-    sourcesnap = new_snapshot(source, snapdir, snapprefix)
-    if not sourcesnap:
-        logging.error("Snapshot failed")
-        sys.exit(1)
-    logging.info("  {} -> {}".format(source, sourcesnap))
+    sourcesnap = src_endpoint.snapshot()
 
     # Need to sync
-    logging.info("Syncing disks ...")
-    cmd = ['sync']
-    try:
-        subprocess.check_output(cmd)
-    except subprocess.CalledProcessError:
-        logging.error("Error on command: {}".format(cmd))
+    src_endpoint.sync()
 
-    logging.info("-" * 50)
+    send_snapshot(src_endpoint, dest_endpoint, sourcesnap,
+                  no_progress=args.no_progress)
+    logging.info(util.log_heading("Backup complete!"))
 
-    logging.info("Sending backup:")
-    logging.info("  from:         {}".format(sourcesnap))
-    if args.dest_cmd:
-        logging.info("  receive cmd:  {}".format(dest))
-    else:
-        logging.info("  to:           {}".format(dest))
+    src_endpoint.set_latest_snapshot(sourcesnap)
 
-    # Now we need to send the snapshot (incrementally, if possible)
-    real_latest = os.path.realpath(latest)
-    if os.path.exists(real_latest):
-        logging.info("  using parent: {}".format(real_latest))
-    else:
-        real_latest = None
-
-    result = send_snapshot(sourcesnap, dest, prevsnapshot=real_latest,
-                           dest_cmd=args.dest_cmd, debug=args.btrfs_debug,
-                           no_progress=args.no_progress)
-    if result != 0:
-        logging.error("Error during btrfs send / receive")
-        sys.exit(1)
-
-    logging.info("-" * 50)
-    logging.info("Backup complete!")
-
-    if os.path.islink(latest):
-        os.unlink(latest)
-    elif os.path.exists(latest):
-        logging.error("Confusion: '{}' should be a symlink".format(latest))
-
-    # Make .latest point to this backup - use relative symlink
-    logging.info("Latest snapshot now at: {}".format(sourcesnap))
-    os.symlink(os.path.basename(sourcesnap), latest)
-
-    logging.info("-" * 50)
-    logging.info("Cleaning up ...")
-
-    if real_latest is not None and args.latest_only:
-        delete_snapshot(real_latest, convert_rw=args.convert_rw)
-
+    logging.info(util.log_heading("Cleaning up ..."))
+    # delete all but latest snapshot
+    if args.latest_only:
+        src_endpoint.delete_old_snapshots(1, convert_rw=args.convert_rw)
     # cleanup backups > NUM_BACKUPS in backup target
-    if not args.dest_cmd and args.num_backups > 0:
-        delete_old_backups(dest, args.num_backups, snapprefix,
-                           convert_rw=args.convert_rw)
+    if args.num_backups > 0:
+        dest_endpoint.delete_old_backups(args.num_backups,
+                                         convert_rw=args.convert_rw)
 
     # run 'btrfs subvolume sync'
     if args.sync:
-        logging.info("-" * 50)
-        locations = [source]
-        if not args.dest_cmd:
-            locations.append(dest)
-        for location in locations:
-            logging.info("Running 'btrfs subvolume sync' for {} "
-                         "...".format(location))
-            cmd = ['btrfs', 'subvolume', 'sync', location]
-            try:
-                subprocess.check_output(cmd)
-            except subprocess.CalledProcessError:
-                logging.error("Error on command: {}".format(cmd))
+        logging.info(util.log_heading("Syncing subvolumes ..."))
+        src_endpoint.subvolume_sync()
+        dest_endpoint.subvolume_sync()
 
-    logging.info("-" * 50)
-    logging.info("Done!")
+    logging.info(util.log_heading("Finished at {}".format(time.ctime())))
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (util.AbortError, KeyboardInterrupt):
+        sys.exit(1)
