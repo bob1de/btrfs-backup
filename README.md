@@ -156,22 +156,5 @@ a snapshot can be done entirely with btrfs tools:
 	$ btrfs subvolume snapshot /snapshot/root/YYMMDD-HHMMSS /active/root
 	$ btrfs subvolume snapshot /snapshot/home/YYMMDD-HHMMSS /active/home
 
-The snapshots from btrfs-backup may be placed in /snapshot-subvol/ by
-using the --snapshot-dir option. Here is a simple backup script using
-this approach:
-
-```bash
-#!/usr/bin/env bash
-
-cmd=/usr/local/bin/btrfs-backup.py
-destdir=/media/backup # Mount backup disk here
-dirs=( '/' '/home' )  # Backup these dirs
-btrfs0=/run/btrfs     # Mount subvolid=0 here
-nbackup=24            # Keep this many backups on $destdir
-
-for d in "${dirs[@]}"; do
-    args="--num-backups $nbackup --snapshot-folder $btrfs0/snapshot_subvol$d --latest-only"
-    echo Executing $cmd $args $d $destdir$d
-    $cmd $args $d $destdir$d
-done
-```
+The snapshots from btrfs-backup may be placed in ``/snapshots/`` by
+using the ``--snapshot-folder`` option.
