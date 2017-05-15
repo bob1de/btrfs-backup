@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-
 # Backup a btrfs volume to another, incrementally
 # Requires Python >= 3.3, btrfs-progs >= 3.12 most likely.
 
