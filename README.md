@@ -1,8 +1,5 @@
-btrfs-backup
-============
+# btrfs-backup
 
-About
------
 This script supports incremental backups for *btrfs* using *snapshots*
 and *send/receive* between filesystems. Think of it as a really basic
 version of Time Machine.
@@ -21,9 +18,7 @@ kinds of setups with only minimal maintenance effort.
 It is a fork of https://github.com/lordsutch/btrfs-backup with extended
 features and some fixes.
 
-
-Features
---------
+### Features
 * Initial creation of full backups
 * Incremental backups on subsequent runs
 * Different backup storage engines:
@@ -36,9 +31,7 @@ Features
   are met
 * Detailled logging output with configurable log level
 
-
-Requirements
-------------
+### Requirements
 * Python 3.3 or later
 * Appropriate btrfs-progs; typically you'll want **at least** 3.12 with
   Linux 3.12/3.13
@@ -46,11 +39,31 @@ Requirements
 * (optional) ``pv`` command for displaying progress during backups
 
 
-Sample usage
-------------
+## Installation
+### Install via PIP
+The easiest way to get up and running is via pip. If ``pip3`` is missing
+on your system and you run a Debian-based distribution, simply install
+it via:
+
+	$ sudo apt-get install python3-pip python3-wheel
+
+Then, you can fetch the latest version of btrfs-backup:
+
+	$ sudo pip3 install btrfs_backup
+
+### Manual installation
+Alternatively, clone this git repository
+
+	$ git clone https://github.com/efficiosoft/btrfs-backup
+	$ cd btrfs-backup
+	$ git checkout tags/v0.2  # optionally checkout a specific version
+	$ sudo ./setup.py install
+
+
+## Sample usage
 (as root)
 
-	$ btrfs-backup.py /home /backup
+	$ btrfs-backup /home /backup
 
 This will create a read-only snapshot of ``/home``
 in ``/home/snapshot/YYMMDD-HHMMSS``, and then send it to
@@ -69,8 +82,8 @@ destination.  For example, you might want to backup both ``/`` and ``/home``.
 The main caveat is you'll want to put the backups in separate folders
 on the destination drive to avoid confusion.
 
-	$ btrfs-backup.py / /backup/root
-	$ btrfs-backup.py /home /backup/home
+	$ btrfs-backup / /backup/root
+	$ btrfs-backup /home /backup/home
 
 If you really want to store backups of different subvolumes at the same
 location, you have to specify a prefix using the ``--snapshot-prefix``
@@ -78,8 +91,8 @@ option. Without that, ``btrfs-backup`` can't distinguish between your
 different backup chains and will mix them up. Using the example from
 above, it could look like the following:
 
-	$ btrfs-backup.py --snapshot-prefix root / /backup
-	$ btrfs-backup.py --snapshot-prefix home /home /backup
+	$ btrfs-backup --snapshot-prefix root / /backup
+	$ btrfs-backup --snapshot-prefix home /home /backup
 
 You can specify the flag ``--latest-only`` to only keep the most recent
 snapshot on the source filesystem. The parameter ``--num-backups <num>``
@@ -87,21 +100,19 @@ tells ``btrfs-backup`` to delete all but the latest ``<num>``
 backups. This one may only be used when backing up locally.
 
 
-Backing up regularly
---------------------
+## Backing up regularly
 With anacron on Debian, you could simply add a file ``/etc/cron.daily/local-backup``:
 
 ```sh
 #!/bin/sh
-ionice -c 3 /path/to/btrfs-backup.py --quiet --latest-only --num-backups 2 \
+ionice -c 3 /path/to/btrfs-backup --quiet --num-snapshots 1 --num-backups 3 \
             /home /backup/home
 ```
 
 More or less frequent backups could be made using other ``cron.*`` scripts.
 
 
-Restoring a snapshot
---------------------
+## Restoring a snapshot
 If necessary, you can restore a whole snapshot by using e.g.
 
 	$ mkdir /home/snapshot
@@ -117,8 +128,7 @@ into a read-write snapshot, and then re-pivoting your mounted
 subvolume to the read-write snapshot.
 
 
-Locking
--------
+## Locking
 There is no locking. If you back up too often (i.e. more quickly than
 it takes to make a snapshot, which can take several minutes on a
 filesystem with lots of files), you might end up with a new backup
@@ -131,7 +141,7 @@ example, in ``/etc/cron.hourly/local-backup``:
 ```sh
 #!/bin/sh
 flock -n /tmp/btrfs-backup.lock \
-    ionice -c 3 /path/to/btrfs-backup.py --quiet --latest-only --num-backups 2 \
+    ionice -c 3 /path/to/btrfs-backup --quiet --num-snapshots 1 --num-backups 3 \
                 /home /backup/home
 ```
 
@@ -139,8 +149,7 @@ You may omit the ``-n`` parameter if you want to wait rather than fail
 in case a backup is already running.
 
 
-Alternative workflow
---------------------
+## Alternative workflow
 An alternative structure is to keep all subvolumes in the root directory
 
 	/
