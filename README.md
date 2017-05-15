@@ -24,11 +24,11 @@ Features
 * Initial creation of full backups
 * Incremental backups on subsequent runs
 * Different backup storage engines:
-  * Local storage, including deletion of old backups, if desired
+  * Local storage
   * Remote storage via SSH
   * Custom storage: Alternatively, the output of ``btrfs send`` may be
-    piped to a custom shell command
-* Deletion of old snapshots, if desired
+    piped to a custom shell command.
+* Simple and configurable retention policy for local and remote snapshots
 * Creation of backups without root privileges, if some special conditions
   are met
 * Detailled logging output with configurable log level

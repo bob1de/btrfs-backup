@@ -89,48 +89,50 @@ def send_snapshot(src_endpoint, dest_endpoint, sourcesnap, no_progress=False):
 
 def main():
     # Parse command line arguments
-    parser = argparse.ArgumentParser(description="incremental btrfs backup",
+    parser = argparse.ArgumentParser(description="Incremental btrfs backup",
                                      formatter_class=util.ArgparseSmartFormatter)
-    parser.add_argument('-v', '--verbosity', default='info',
-                        choices=['debug', 'info', 'warning', 'error'],
+    parser.add_argument("-v", "--verbosity", default="info",
+                        choices=["debug", "info", "warning", "error"],
                         help="set verbosity level")
-    parser.add_argument('-q', '--quiet', action='store_true',
-                        help="shortcut for --no-progress --verbosity warning")
-    parser.add_argument('-d', '--btrfs-debug', action='store_true',
-                        help="enable debugging on btrfs send / receive")
-    parser.add_argument('-P', '--no-progress', action='store_true',
-                        help="don't display progress during backup")
-    parser.add_argument('-C', '--skip-fs-checks', action='store_true',
-                        help="don't check whether source / destination is a "
-                             "btrfs subvolume / filesystem")
-    parser.add_argument('-w', '--convert-rw', action='store_true',
-                        help="convert read-only snapshots to read-write "
-                             "before deleting them; allows regular users "
+    parser.add_argument("-q", "--quiet", action="store_true",
+                        help="Shortcut for '--no-progress --verbosity "
+                             "warning'.")
+    parser.add_argument("-d", "--btrfs-debug", action="store_true",
+                        help="Enable debugging on btrfs send / receive.")
+    parser.add_argument("-P", "--no-progress", action="store_true",
+                        help="Don't display progress and stats during backup.")
+    parser.add_argument("-C", "--skip-fs-checks", action="store_true",
+                        help="Don't check whether source / destination is a "
+                             "btrfs subvolume / filesystem.")
+    parser.add_argument("-w", "--convert-rw", action="store_true",
+                        help="Convert read-only snapshots to read-write "
+                             "before deleting them. This allows regular users "
                              "to delete subvolumes when mount option "
-                             "user_subvol_rm_allowed is enabled")
-    parser.add_argument('-s', '--sync', action='store_true',
-                        help="run 'btrfs subvolume sync' after deleting "
-                             "subvolumes")
+                             "user_subvol_rm_allowed is enabled.")
+    parser.add_argument("-s", "--sync", action="store_true",
+                        help="Run 'btrfs subvolume sync' after deleting "
+                             "subvolumes.")
     parser.add_argument("-N", "--num-snapshots", type=int, default=0,
-                        help="only keep latest n snapshots on source "
-                             "filesystem")
+                        help="Only keep latest n snapshots on source "
+                             "filesystem.")
     parser.add_argument("-n", "--num-backups", type=int, default=0,
-                        help="only keep latest n backups at destination; "
-                             "this option is only supported for local storage")
+                        help="Only keep latest n backups at destination. "
+                             "This option is not supported for 'shell://' "
+                             "storage.")
     parser.add_argument("--latest-only", action="store_true",
-                        help="shortcut for '--num-snapshots 1' (for backwards "
-                             "compatibility)")
+                        help="Shortcut for '--num-snapshots 1' (for backwards "
+                             "compatibility).")
     parser.add_argument("-f", "--snapshot-folder",
-                        help="snapshot folder in source filesystem; "
-                             "either relative to source or absolute")
+                        help="Snapshot folder in source filesystem; "
+                             "either relative to source or absolute.")
     parser.add_argument("-p", "--snapshot-prefix",
-                        help="prefix for snapshot names")
+                        help="Prefix for snapshot names.")
     parser.add_argument("--ssh-opt", action="append",
-                        help="N|pass extra ssh_config options to ssh(1);\n"
-                             "example: '--ssh-opt Cipher=aes256-ctr --ssh-opt "
+                        help="N|Pass extra ssh_config options to ssh(1).\n"
+                             "Example: '--ssh-opt Cipher=aes256-ctr --ssh-opt "
                              "IdentityFile=/root/id_rsa'\n"
                              "would result in 'ssh -o Cipher=aes256-ctr "
-                             "-o IdentityFile=/root/id_rsa'")
+                             "-o IdentityFile=/root/id_rsa'.")
     parser.add_argument("source", help="Subvolume to backup.")
     parser.add_argument("dest",
                         help="N|Destination to send backups to.\n"
@@ -257,17 +259,13 @@ def main():
     # cleanup snapshots > num_snapshots in snapdir
     if args.num_snapshots > 0:
         src_endpoint.delete_old_snapshots(args.num_snapshots,
-                                          convert_rw=args.convert_rw)
+                                          convert_rw=args.convert_rw,
+                                          sync=args.sync)
     # cleanup backups > num_backups in backup target
     if args.num_backups > 0:
         dest_endpoint.delete_old_backups(args.num_backups,
-                                         convert_rw=args.convert_rw)
-
-    # run 'btrfs subvolume sync'
-    if args.sync:
-        logging.info(util.log_heading("Syncing subvolumes ..."))
-        src_endpoint.subvolume_sync()
-        dest_endpoint.subvolume_sync()
+                                         convert_rw=args.convert_rw,
+                                         sync=args.sync)
 
     logging.info(util.log_heading("Finished at {}".format(time.ctime())))
 
