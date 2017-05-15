@@ -2,7 +2,7 @@ import os
 import subprocess
 import logging
 
-import util
+from . import util
 
 
 def require_snapdir(method):

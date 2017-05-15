@@ -34,8 +34,8 @@ import logging
 import argparse
 import urllib.parse
 
-import util
-import endpoint
+from . import util
+from . import endpoint
 
 
 def send_snapshot(src_endpoint, dest_endpoint, sourcesnap, no_progress=False):
@@ -87,7 +87,7 @@ def send_snapshot(src_endpoint, dest_endpoint, sourcesnap, no_progress=False):
             raise util.AbortError()
 
 
-def main():
+def run():
     # Parse command line arguments
     parser = argparse.ArgumentParser(description="Incremental btrfs backup",
                                      formatter_class=util.ArgparseSmartFormatter)
@@ -270,8 +270,12 @@ def main():
     logging.info(util.log_heading("Finished at {}".format(time.ctime())))
 
 
-if __name__ == "__main__":
+def main():
     try:
-        main()
+        run()
     except (util.AbortError, KeyboardInterrupt):
         sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
