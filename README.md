@@ -24,10 +24,11 @@ Features
 * Initial creation of full backups
 * Incremental backups on subsequent runs
 * Different backup storage engines:
-  * Local storage, including deletion of old backups if desired
+  * Local storage, including deletion of old backups, if desired
   * Remote storage via SSH
   * Custom storage: Alternatively, the output of ``btrfs send`` may be
     piped to a custom shell command
+* Deletion of old snapshots, if desired
 * Creation of backups without root privileges, if some special conditions
   are met
 * Detailled logging output with configurable log level
@@ -38,6 +39,7 @@ Requirements
 * Python 3.3 or later
 * Appropriate btrfs-progs; typically you'll want **at least** 3.12 with
   Linux 3.12/3.13
+* (optional) OpenSSH's ``ssh`` command for remote backup storage
 * (optional) ``pv`` command for displaying progress during backups
 
 
