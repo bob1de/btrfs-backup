@@ -55,8 +55,9 @@ def send_snapshot(src_endpoint, dest_endpoint, sourcesnap, no_progress=False):
         cmd = ["pv", "--help"]
         logging.debug("Executing: {}".format(cmd))
         try:
-            subprocess.check_output(cmd)
-        except (FileNotFoundError, subprocess.CalledProcessError) as e:
+            subprocess.call(cmd, stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL)
+        except FileNotFoundError as e:
             logging.debug("  -> got exception: {}".format(e))
             logging.debug("  -> pv is not available")
         else:
@@ -110,15 +111,19 @@ def main():
     parser.add_argument('-s', '--sync', action='store_true',
                         help="run 'btrfs subvolume sync' after deleting "
                              "subvolumes")
-    parser.add_argument('-l', '--latest-only', action='store_true',
-                        help="only keep latest snapshot on source filesystem")
-    parser.add_argument('-n', '--num-backups', type=int, default=0,
+    parser.add_argument("-N", "--num-snapshots", type=int, default=0,
+                        help="only keep latest n snapshots on source "
+                             "filesystem")
+    parser.add_argument("-n", "--num-backups", type=int, default=0,
                         help="only keep latest n backups at destination; "
                              "this option is only supported for local storage")
-    parser.add_argument('-f', '--snapshot-folder',
+    parser.add_argument("--latest-only", action="store_true",
+                        help="shortcut for '--num-snapshots 1' (for backwards "
+                             "compatibility)")
+    parser.add_argument("-f", "--snapshot-folder",
                         help="snapshot folder in source filesystem; "
                              "either relative to source or absolute")
-    parser.add_argument('-p', '--snapshot-prefix',
+    parser.add_argument("-p", "--snapshot-prefix",
                         help="prefix for snapshot names")
     parser.add_argument("--ssh-opt", action="append",
                         help="N|pass extra ssh_config options to ssh(1);\n"
@@ -135,9 +140,12 @@ def main():
                              " - ssh://[user@]host[:port]/path/to/backups")
     args = parser.parse_args()
 
+    # applying shortcuts
     if args.quiet:
         args.no_progress = True
         args.verbosity = "warning"
+    if args.latest_only:
+        args.num_snapshots = 1
 
     logging.basicConfig(format="%(asctime)s  [%(levelname)-5s]  %(message)s",
                         datefmt="%H:%M:%S",
@@ -165,7 +173,7 @@ def main():
     logging.debug("Convert subvolumes to read-write before deletion: {}".format(
         args.convert_rw))
     logging.debug("Run 'btrfs subvolume sync' afterwards: {}".format(args.sync))
-    logging.debug("Keep latest snapshot only: {}".format(args.latest_only))
+    logging.debug("Number of snapshots to keep: {}".format(args.num_snapshots))
     logging.debug("Number of backups to keep: {}".format(
         args.num_backups if args.num_backups > 0 else "Any"))
     logging.debug("Extra SSH config options: {}".format(args.ssh_opt))
@@ -173,51 +181,58 @@ def main():
     # kwargs that are common between all endpoints
     endpoint_kwargs = {"snapprefix": snapprefix}
 
-    src_path = os.path.abspath(args.source)
-    logging.debug("Source: {}".format(src_path))
+    src = os.path.abspath(args.source)
     src_endpoint = endpoint.LocalEndpoint(
-        path=src_path,
+        path=src,
         snapdir=snapdir,
         btrfs_debug=args.btrfs_debug,
         fstype_check=False,
         subvol_check=not args.skip_fs_checks,
         **endpoint_kwargs)
+    logging.debug("Source: {}".format(src))
+    logging.debug("Source endpoint: {}".format(src_endpoint))
 
     # parse destination string
     dest = args.dest
     if dest.startswith("shell://"):
         dest_type = "shell"
         dest_cmd = dest[8:]
+        dest_endpoint = endpoint.ShellEndpoint(cmd=dest_cmd, **endpoint_kwargs)
     elif dest.startswith("ssh://"):
         dest_type = "ssh"
         parsed_dest = urllib.parse.urlparse(dest)
-        dest_path = parsed_dest.path
+        if not parsed_dest.hostname:
+            logging.error("No hostname for SSH specified.")
+            raise util.AbortError()
+        try:
+            port = parsed_dest.port
+        except ValueError:
+            # invalid literal for int ...
+            port = None
+        dest_path = parsed_dest.path.strip() or "/"
         if parsed_dest.query:
             dest_path += "?" + parsed_dest.query
-    else:
-        dest_type = "local"
-        dest_path = dest
-
-    logging.debug("Destination type: {}".format(dest_type))
-    logging.debug("Destination: {}".format(dest))
-    if dest_type == "shell":
-        dest_endpoint = endpoint.ShellEndpoint(cmd=dest_cmd, **endpoint_kwargs)
-    elif dest_type == "ssh":
+        dest_path = os.path.normpath(dest_path)
         dest_endpoint = endpoint.SSHEndpoint(
             username=parsed_dest.username,
             hostname=parsed_dest.hostname,
-            port=parsed_dest.port or 22,
+            port=port,
             path=dest_path,
             ssh_opts=args.ssh_opt,
             btrfs_debug=args.btrfs_debug,
             **endpoint_kwargs)
     else:
+        dest_type = "local"
+        dest_path = dest
         dest_endpoint = endpoint.LocalEndpoint(
             path=dest_path,
             btrfs_debug=args.btrfs_debug,
             fstype_check=not args.skip_fs_checks,
             subvol_check=False,
             **endpoint_kwargs)
+    logging.debug("Destination type: {}".format(dest_type))
+    logging.debug("Destination: {}".format(dest))
+    logging.debug("Destination endpoint: {}".format(dest_endpoint))
 
     logging.info(util.log_heading("Preparing endpoints ..."))
     src_endpoint.prepare()
@@ -239,10 +254,11 @@ def main():
     src_endpoint.set_latest_snapshot(sourcesnap)
 
     logging.info(util.log_heading("Cleaning up ..."))
-    # delete all but latest snapshot
-    if args.latest_only:
-        src_endpoint.delete_old_snapshots(1, convert_rw=args.convert_rw)
-    # cleanup backups > NUM_BACKUPS in backup target
+    # cleanup snapshots > num_snapshots in snapdir
+    if args.num_snapshots > 0:
+        src_endpoint.delete_old_snapshots(args.num_snapshots,
+                                          convert_rw=args.convert_rw)
+    # cleanup backups > num_backups in backup target
     if args.num_backups > 0:
         dest_endpoint.delete_old_backups(args.num_backups,
                                          convert_rw=args.convert_rw)
