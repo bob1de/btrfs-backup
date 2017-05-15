@@ -64,10 +64,6 @@ class Endpoint:
         logging.warning("Syncing disks is not (yet) supported for "
                         "{}".format(self))
 
-    def subvolume_sync(self):
-        logging.warning("Syncing subvolumes is not (yet) supported for "
-                        "{}".format(self))
-
     @require_snapdir
     def list_snapshots(self):
         return self._list_snapshots(self.snapdir)
@@ -76,18 +72,34 @@ class Endpoint:
     def list_backups(self):
         return self._list_snapshots(self.path)
 
-    def delete_snapshot(self, location, convert_rw=False):
-        logging.warning("Listing / deleting snapshots is not (yet) supported "
-                        "for {}".format(self))
+    def delete_snapshots(self, locations, **kwargs):
+        logging.info("Removing {} snapshot(s):".format(len(locations)))
+        for location in locations:
+            logging.info("  {}".format(location))
+        self._delete_snapshots(locations, **kwargs)
+
+    def delete_snapshot(self, location, **kwargs):
+        self.delete_snapshots([location], **kwargs)
 
     @require_snapdir
-    def delete_old_snapshots(self, keep_num, convert_rw=False):
-        self._delete_old_snapshots(self.snapdir, keep_num,
-                                   convert_rw=convert_rw)
+    def delete_old_snapshots(self, keep_num, **kwargs):
+        self._delete_old_snapshots(self.snapdir, keep_num, **kwargs)
 
     @require_no_snapdir
-    def delete_old_backups(self, keep_num, convert_rw=False):
-        self._delete_old_snapshots(self.path, keep_num, convert_rw=convert_rw)
+    def delete_old_backups(self, keep_num, **kwargs):
+        self._delete_old_snapshots(self.path, keep_num, **kwargs)
+
+    def _build_deletion_cmds(self, locations, convert_rw=False, sync=False):
+        cmds = []
+        if convert_rw:
+            cmds.append(["btrfs", "property", "set", "-ts", location,
+                         "ro", "false"])
+        cmd = ["btrfs", "subvolume", "delete"]
+        cmd.extend(locations)
+        cmds.append(cmd)
+        if sync:
+            cmds.append(["btrfs", "subvolume", "sync", self.path])
+        return cmds
 
     def _listdir(self, location):
         logging.warning("Listing / deleting snapshots is not (yet) supported "
@@ -108,7 +120,11 @@ class Endpoint:
                     snapnames.append(item)
         return snapnames
 
-    def _delete_old_snapshots(self, location, keep_num, convert_rw=False):
+    def _delete_snapshots(self, locations, **kwargs):
+        logging.warning("Listing / deleting snapshots is not (yet) supported "
+                        "for {}".format(self))
+
+    def _delete_old_snapshots(self, location, keep_num, **kwargs):
         time_objs = []
         for item in self._list_snapshots(location):
             time_str = item[len(self.snapprefix):]
@@ -121,11 +137,13 @@ class Endpoint:
         # sort by date, then time;
         time_objs.sort()
 
-        while time_objs and len(time_objs) > keep_num:
-            # delete oldest snapshot
-            to_remove = os.path.join(location, self.snapprefix +
-                                     util.date2str(time_objs.pop(0)))
-            self.delete_snapshot(to_remove, convert_rw=convert_rw)
+        if len(time_objs) > keep_num:
+            # delete oldest snapshots
+            to_remove = []
+            for time_obj in time_objs[:-keep_num]:
+                to_remove.append(os.path.join(location, self.snapprefix +
+                                              util.date2str(time_obj)))
+            self.delete_snapshots(to_remove, **kwargs)
 
 
 class LocalEndpoint(Endpoint):
@@ -186,7 +204,7 @@ class LocalEndpoint(Endpoint):
         elif os.path.exists(latest):
             logging.error("Confusion: '{}' should be a symlink".format(latest))
         # Make .latest point to snapname - use relative symlink
-        logging.debug("Symlinking: {} -> {}".format(latest, snapname))
+        logging.debug("Symlinking: {} -> {}".format(snapname, latest))
         os.symlink(snapname, latest)
         logging.info("Latest snapshot is now: {}".format(snapname))
 
@@ -241,32 +259,14 @@ class LocalEndpoint(Endpoint):
         except subprocess.CalledProcessError:
             logging.error("Error on command: {}".format(cmd))
 
-    def subvolume_sync(self):
-        cmd = ["btrfs", "subvolume", "sync", self.path]
-        logging.debug("Executing: {}".format(cmd))
-        try:
-            subprocess.check_output(cmd)
-        except subprocess.CalledProcessError:
-            logging.error("Error on command: {}".format(cmd))
-
-    def delete_snapshot(self, location, convert_rw=False):
-        logging.info("Removing snapshot: {}".format(location))
-        if convert_rw:
-            logging.debug("  converting to read-write ...")
-            cmd = ["btrfs", "property", "set", "-ts", location, "ro", "false"]
+    def _delete_snapshots(self, locations, **kwargs):
+        cmds = self._build_deletion_cmds(locations, **kwargs)
+        for cmd in cmds:
             logging.debug("Executing: {}".format(cmd))
             try:
                 subprocess.check_output(cmd)
             except subprocess.CalledProcessError:
                 logging.error("Error on command: {}".format(cmd))
-                return None
-        logging.debug("  deleting ...")
-        cmd = ["btrfs", "subvolume", "delete", location]
-        logging.debug("Executing: {}".format(cmd))
-        try:
-            subprocess.check_output(cmd)
-        except subprocess.CalledProcessError:
-            logging.error("Error on command: {}".format(cmd))
 
     def _listdir(self, location):
         return os.listdir(location)
@@ -329,8 +329,8 @@ class SSHEndpoint(Endpoint):
             cmd += ["-o", opt]
         cmd += [self._build_connect_string()]
         if multi:
-            for _cmd in cmds:
-                if append_cmd(cmd, _cmd):
+            for i, _cmd in enumerate(cmds):
+                if append_cmd(cmd, _cmd) and i+1 < len(cmds):
                     cmd.append(";")
         else:
             append_cmd(cmd, cmds)
@@ -359,3 +359,30 @@ class SSHEndpoint(Endpoint):
         stdout = subprocess.DEVNULL if loglevel >= logging.WARNING else None
         logging.debug("Executing: {}".format(cmd))
         return subprocess.Popen(cmd, stdin=stdin, stdout=stdout)
+
+    def _listdir(self, location):
+        cmd = ["ls", "-1a", location]
+        cmd = self._build_ssh_cmd(cmd)
+        logging.debug("Executing: {}".format(cmd))
+        try:
+            output = subprocess.check_output(cmd, universal_newlines=True)
+        except subprocess.CalledProcessError as e:
+            logging.debug("  -> got exception: {}".format(e))
+            logging.warning("Couldn't list {} at {}".format(location, self))
+            return []
+        items = []
+        for item in output.splitlines():
+            # remove . and ..
+            if item not in (".", ".."):
+                items.append(item)
+        return items
+
+    def _delete_snapshots(self, locations, **kwargs):
+        cmds = self._build_deletion_cmds(locations, **kwargs)
+        cmd = self._build_ssh_cmd(cmds, multi=True)
+        logging.debug("Executing: {}".format(cmd))
+        try:
+            subprocess.check_output(cmd, universal_newlines=True)
+        except subprocess.CalledProcessError as e:
+            logging.debug("  -> got exception: {}".format(e))
+            logging.warning("Couldn't delete snapshots at {}".format(self))
