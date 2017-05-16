@@ -15,9 +15,10 @@ subvolumes.
 btrfs-backup has almost no dependencies and hence is well suited for
 many kinds of setups with only minimal maintenance effort.
 
-Originally, it started as a fork of
-https://github.com/lordsutch/btrfs-backup. Since then, most of the code
-has been rewritten and many new features were added.
+Originally, it started as a fork of a project with the same name,
+written by Chris Lawrence. Since then, most of the code has been
+refactored and many new features were added before this repository
+has been transferred to me. Many thanks to Chris for his work.
 
 :Latest release: v0.2
 :Downloads: http://pypi.python.org/pypi/btrfs_backup
