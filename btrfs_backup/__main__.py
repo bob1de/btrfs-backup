@@ -1,6 +1,7 @@
 # Backup a btrfs volume to another, incrementally
 # Requires Python >= 3.3, btrfs-progs >= 3.12 most likely.
-
+#
+# Copyright (c) 2017 Robert Schindler <r.schindler@efficiosoft.com>
 # Copyright (c) 2014 Chris Lawrence <lawrencc@debian.org>
 #
 # Permission is hereby granted, free of charge, to any person
