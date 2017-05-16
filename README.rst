@@ -19,6 +19,12 @@ Originally, it started as a fork of
 https://github.com/lordsutch/btrfs-backup. Since then, most of the code
 has been rewritten and many new features were added.
 
+:Latest release: v0.2
+:Downloads: http://pypi.python.org/pypi/btrfs_backup
+:Source: https://github.com/efficiosoft/btrfs-backup
+:Platforms: Linux >= 3.12, Python >= 3.3
+:Keywords: backup, btrfs, snapshot, send, receive, ssh
+
 
 Features
 --------
