@@ -1,8 +1,8 @@
 # btrfs-backup
 
-This script supports incremental backups for *btrfs* using *snapshots*
-and *send/receive* between filesystems. Think of it as a really basic
-version of Time Machine.
+This project supports incremental backups for *btrfs* using *snapshots*
+and *send/receive* between filesystems. Think of it as a basic version
+of Time Machine.
 
 Backups can be stored either locally or remotely (e.g. via SSH).
 
@@ -12,8 +12,12 @@ minutes without detailled knowledge on how ``btrfs send/receive``
 works. However, you should have a basic understanding of snapshots
 and subvolumes.
 
-It is a fork of https://github.com/lordsutch/btrfs-backup with extended
-features and some fixes.
+btrfs-backup has almost no dependencies and hence is well suited for many
+kinds of setups with only minimal maintenance effort.
+
+Originally, it started as a fork of
+https://github.com/lordsutch/btrfs-backup. Since then, most of the code
+has been rewritten and many new features were added.
 
 ### Features
 * Initial creation of full backups
@@ -38,7 +42,7 @@ features and some fixes.
 
 ## Installation
 ### Install via PIP
-The easiest way to get up and running is via pip. If ``pip3`` is missing
+The easiest way to get up and running is via PIP. If ``pip3`` is missing
 on your system and you run a Debian-based distribution, simply install
 it via:
 
@@ -68,7 +72,7 @@ in ``/home/snapshot/YYMMDD-HHMMSS``, and then send it to
 snapshot and send the difference between the previous snapshot (tracked
 with the symbolic link ``.latest``) and the new one.
 
-**Note: Both source and destination filesystems need to be ``btrfs``
+**Note: Both source and destination filesystems need to be btrfs
 volumes.**
 
 For the backup to be sensible, they shouldn't be the same filesystem.
@@ -91,10 +95,9 @@ above, it could look like the following:
 	$ btrfs-backup --snapshot-prefix root / /backup
 	$ btrfs-backup --snapshot-prefix home /home /backup
 
-You can specify the flag ``--latest-only`` to only keep the most recent
-snapshot on the source filesystem. The parameter ``--num-backups <num>``
-tells ``btrfs-backup`` to delete all but the latest ``<num>``
-backups. This one may only be used when backing up locally.
+You can specify ``--num-snapshots <num>`` to only keep the latest
+``<num>`` number of snapshots on the source filesystem. ``--num-backups
+<num>`` does the same for the backup location.
 
 
 ## Backing up regularly
