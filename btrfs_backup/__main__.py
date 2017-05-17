@@ -243,10 +243,6 @@ def run():
     logging.info(util.log_heading("Snapshotting ..."))
     sourcesnap = src_endpoint.snapshot()
 
-    # Need to sync
-    logging.info(util.log_heading("Syncing disks ..."))
-    src_endpoint.sync()
-
     logging.info(util.log_heading("Sending ..."))
     send_snapshot(src_endpoint, dest_endpoint, sourcesnap,
                   no_progress=args.no_progress)

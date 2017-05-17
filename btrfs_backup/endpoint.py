@@ -51,7 +51,11 @@ class Endpoint:
     def set_latest_snapshot(self, snapname):
         raise NotImplemented()
 
-    def snapshot(self):
+    @require_snapdir
+    def snapshot(self, **kwargs):
+        return self._snapshot(**kwargs)
+
+    def _snapshot(self, readonly=True, sync=True):
         raise NotImplemented()
 
     def send(self, *args, **kwargs):
@@ -59,10 +63,6 @@ class Endpoint:
 
     def receive(self, *args, **kwargs):
         raise NotImplemented()
-
-    def sync(self):
-        logging.warning("Syncing disks is not (yet) supported for "
-                        "{}".format(self))
 
     @require_snapdir
     def list_snapshots(self):
@@ -208,14 +208,13 @@ class LocalEndpoint(Endpoint):
         os.symlink(snapname, latest)
         logging.info("Latest snapshot is now: {}".format(snapname))
 
-    @require_snapdir
-    def snapshot(self, readonly=True):
+    def _snapshot(self, readonly=True, sync=True):
         snapname = self.snapprefix + util.date2str()
         snaploc = os.path.join(self.snapdir, snapname)
         logging.info("{} -> {}".format(self.path, snaploc))
-        cmd = ['btrfs', 'subvolume', 'snapshot']
+        cmd = ["btrfs", "subvolume", "snapshot"]
         if readonly:
-            cmd += ['-r']
+            cmd += ["-r"]
         cmd += [self.path, snaploc]
         logging.debug("Executing: {}".format(cmd))
         try:
@@ -224,6 +223,15 @@ class LocalEndpoint(Endpoint):
             logging.error("Error on command: {}".format(cmd))
             logging.error("Snapshot failed")
             raise util.AbortError()
+        # sync disks
+        if sync:
+            logging.info("Syncing disks ...")
+            cmd = ["sync"]
+            logging.debug("Executing: {}".format(cmd))
+            try:
+                subprocess.check_output(cmd)
+            except subprocess.CalledProcessError:
+                logging.error("Error on command: {}".format(cmd))
         return snapname
 
     def send(self, snapname, parent=None):
@@ -249,15 +257,6 @@ class LocalEndpoint(Endpoint):
         stdout = subprocess.DEVNULL if loglevel >= logging.WARNING else None
         logging.debug("Executing: {}".format(cmd))
         return subprocess.Popen(cmd, stdin=stdin, stdout=stdout)
-
-    def sync(self):
-        """Calls 'sync'."""
-        cmd = ['sync']
-        logging.debug("Executing: {}".format(cmd))
-        try:
-            subprocess.check_output(cmd)
-        except subprocess.CalledProcessError:
-            logging.error("Error on command: {}".format(cmd))
 
     def _delete_snapshots(self, locations, **kwargs):
         cmds = self._build_deletion_cmds(locations, **kwargs)
