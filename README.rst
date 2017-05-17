@@ -19,6 +19,9 @@ Originally, it started as a fork of a project with the same name,
 written by Chris Lawrence. Since then, most of the code has been
 refactored and many new features were added before this repository
 has been transferred to me. Many thanks to Chris for his work.
+The old code base has been tagged with ``legacy``. If, for any reason,
+you want to continue using it and miss the new features, you can check
+that out.
 
 :Latest release: v0.2
 :Downloads: http://pypi.python.org/pypi/btrfs_backup
