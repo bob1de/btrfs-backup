@@ -1,3 +1,4 @@
+import functools
 import os
 import time
 import argparse
@@ -25,6 +26,51 @@ class AbortError(Exception):
     pass
 
 
+@functools.total_ordering
+class Snapshot:
+    """Represents a snapshot with comparison by prefix and time_obj."""
+    def __init__(self, location, prefix, endpoint, time_obj=None):
+        self.location = location
+        self.prefix = prefix
+        self.endpoint = endpoint
+        if time_obj is None:
+            time_obj = str2date()
+        self.time_obj = time_obj
+
+    def __eq__(self, other):
+        return self.prefix == other.prefix and self.time_obj == other.time_obj
+
+    def __lt__(self, other):
+        if self.prefix != other.prefix:
+            raise NotImplemented("prefixes dont match: "
+                                 "{} vs {}".format(self.prefix, other.prefix))
+        return self.time_obj < other.time_obj
+
+    def __repr__(self):
+        return self.get_name()
+
+    def get_name(self):
+        return self.prefix + date2str(self.time_obj)
+
+    def get_path(self):
+        return os.path.join(self.location, self.get_name())
+
+    def find_parent(self, present_snapshots):
+        """Returns object from ``present_snapshot`` most suitable for being
+           used as a parent for transferring this one or ``None``,
+           if none found."""
+        if self in present_snapshots:
+            # snapshot already transferred
+            return None
+        for present_snapshot in reversed(present_snapshots):
+            if present_snapshot < self:
+                return present_snapshot
+        # no snapshot older than snapshot is present ...
+        if present_snapshots:
+            # ... hence we choose the oldest one present as parent
+            return present_snapshots[0]
+
+
 def log_heading(caption):
     return "{:-<50}".format("--[ {} ]".format(caption))
 
@@ -38,7 +84,9 @@ def date2str(timestamp=None, format=None):
 
 def str2date(timestring=None, format=None):
     if timestring is None:
-        return time.localtime()
+        # we don't simply return time.localtime() because this would have
+        # a higher precision than the result converted from string
+        timestring = date2str()
     if format is None:
         format = DATE_FORMAT
     return time.strptime(timestring, format)

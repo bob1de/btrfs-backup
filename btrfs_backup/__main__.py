@@ -37,15 +37,14 @@ from . import util
 from . import endpoint
 
 
-def send_snapshot(src_endpoint, dest_endpoint, sourcesnap, no_progress=False):
+def send_snapshot(snapshot, dest_endpoint, parent=None, no_progress=False):
     # Now we need to send the snapshot (incrementally, if possible)
-    latest_snapshot = src_endpoint.get_latest_snapshot()
-    logging.info("From:         {}".format(sourcesnap))
+    logging.info(util.log_heading("Transferring {}".format(snapshot)))
     logging.info("To:           {}".format(dest_endpoint))
-    if latest_snapshot:
-        logging.info("Using parent: {}".format(latest_snapshot))
+    if parent:
+        logging.info("Using parent: {}".format(parent))
     else:
-        logging.info("No previous snapshot found, sending full backup.")
+        logging.info("No previous snapshot available, sending full backup.")
 
     pv = False
     if not no_progress:
@@ -64,7 +63,7 @@ def send_snapshot(src_endpoint, dest_endpoint, sourcesnap, no_progress=False):
             pv = True
 
     pipes = []
-    pipes.append(src_endpoint.send(sourcesnap, parent=latest_snapshot))
+    pipes.append(snapshot.endpoint.send(snapshot, parent=parent))
 
     if pv:
         cmd = ["pv"]
@@ -84,6 +83,51 @@ def send_snapshot(src_endpoint, dest_endpoint, sourcesnap, no_progress=False):
         if retcode != 0:
             logging.error("Error during btrfs send / receive")
             raise util.AbortError()
+
+
+def sync_snapshots(src_endpoint, dest_endpoint, keep_num_backups=0, **kwargs):
+    logging.info(util.log_heading("Transferring snapshots ..."))
+
+    src_snapshots = src_endpoint.list_snapshots()
+    dest_snapshots = dest_endpoint.list_snapshots()
+
+    logging.debug("Planning transmissions ...")
+    to_consider = src_snapshots
+    if keep_num_backups > 0:
+        # It wouldn't make sense to transfer snapshots that would be deleted
+        # afterwards anyway.
+        to_consider = to_consider[-keep_num_backups:]
+
+    to_transfer = []
+    for snapshot in to_consider:
+        # filter source snapshots for only those already transferred
+        if snapshot in dest_snapshots:
+            # already transferred
+            continue
+        to_transfer.append(snapshot)
+
+    logging.info("Going to transfer {} snapshot(s):".format(len(to_transfer)))
+    for snapshot in to_transfer:
+        logging.info("  {}".format(snapshot))
+
+    while to_transfer:
+        present_snapshots = [s for s in src_snapshots
+                             if s in dest_snapshots]
+        # choose snapshot with smallest distance to its parent
+        def key(s):
+            p = s.find_parent(present_snapshots)
+            if p is None:
+                return 999999999
+            d = src_snapshots.index(s) - src_snapshots.index(p)
+            return -d if d < 0 else d
+        best_snapshot = min(to_transfer, key=key)
+        parent = best_snapshot.find_parent(present_snapshots)
+        send_snapshot(best_snapshot, dest_endpoint, parent=parent, **kwargs)
+        dest_endpoint.add_snapshot(best_snapshot)
+        dest_snapshots = dest_endpoint.list_snapshots()
+        to_transfer.remove(best_snapshot)
+
+    logging.info(util.log_heading("Snapshot transfers complete!"))
 
 
 def run():
@@ -184,11 +228,10 @@ def run():
 
     src = os.path.abspath(args.source)
     src_endpoint = endpoint.LocalEndpoint(
-        path=src,
-        snapdir=snapdir,
+        path=snapdir,
+        source=src,
         btrfs_debug=args.btrfs_debug,
-        fstype_check=False,
-        subvol_check=not args.skip_fs_checks,
+        fs_checks=not args.skip_fs_checks,
         **endpoint_kwargs)
     logging.debug("Source: {}".format(src))
     logging.debug("Source endpoint: {}".format(src_endpoint))
@@ -228,8 +271,7 @@ def run():
         dest_endpoint = endpoint.LocalEndpoint(
             path=dest_path,
             btrfs_debug=args.btrfs_debug,
-            fstype_check=not args.skip_fs_checks,
-            subvol_check=False,
+            fs_checks=not args.skip_fs_checks,
             **endpoint_kwargs)
     logging.debug("Destination type: {}".format(dest_type))
     logging.debug("Destination: {}".format(dest))
@@ -243,12 +285,9 @@ def run():
     logging.info(util.log_heading("Snapshotting ..."))
     sourcesnap = src_endpoint.snapshot()
 
-    logging.info(util.log_heading("Sending ..."))
-    send_snapshot(src_endpoint, dest_endpoint, sourcesnap,
-                  no_progress=args.no_progress)
-    logging.info(util.log_heading("Backup complete!"))
-
-    src_endpoint.set_latest_snapshot(sourcesnap)
+    sync_snapshots(src_endpoint, dest_endpoint,
+                   keep_num_backups=args.num_backups,
+                   no_progress=args.no_progress)
 
     logging.info(util.log_heading("Cleaning up ..."))
     # cleanup snapshots > num_snapshots in snapdir
@@ -258,9 +297,9 @@ def run():
                                           sync=args.sync)
     # cleanup backups > num_backups in backup target
     if args.num_backups > 0:
-        dest_endpoint.delete_old_backups(args.num_backups,
-                                         convert_rw=args.convert_rw,
-                                         sync=args.sync)
+        dest_endpoint.delete_old_snapshots(args.num_backups,
+                                           convert_rw=args.convert_rw,
+                                           sync=args.sync)
 
     logging.info(util.log_heading("Finished at {}".format(time.ctime())))
 

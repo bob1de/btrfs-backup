@@ -5,31 +5,22 @@ import logging
 from . import util
 
 
-def require_snapdir(method):
-    """Decorator that ensures snapdir is set on the object the called
+def require_source(method):
+    """Decorator that ensures source is set on the object the called
        method belongs to."""
     def wrapped(self, *args, **kwargs):
-        if self.snapdir is None:
-            raise ValueError("snapdir hasn't been set")
-        return method(self, *args, **kwargs)
-    return wrapped
-
-def require_no_snapdir(method):
-    """Decorator that ensures snapdir is not set on the object the called
-       method belongs to."""
-    def wrapped(self, *args, **kwargs):
-        if self.snapdir is not None:
-            raise ValueError("snapdir has been set which is not allowed "
-                             "for this kind of task")
+        if self.source is None:
+            raise ValueError("source hasn't been set")
         return method(self, *args, **kwargs)
     return wrapped
 
 
 class Endpoint:
-    def __init__(self, path="", snapprefix="", snapdir=None, btrfs_debug=False):
+    def __init__(self, path=None, snapprefix="", source=None,
+                 btrfs_debug=False):
         self.path = path
         self.snapprefix = snapprefix
-        self.snapdir = snapdir
+        self.source = source
         if snapprefix:
             self.lastname = "." + snapprefix + "_latest"
         else:
@@ -38,6 +29,7 @@ class Endpoint:
         self.btrfs_flags = []
         if self.btrfs_debug:
             self.btrfs_flags += ["-vv"]
+        self.__cached_snapshots = None
 
     def __repr__(self):
         return self.path
@@ -45,13 +37,7 @@ class Endpoint:
     def prepare(self):
         pass
 
-    def get_latest_snapshot(self):
-        raise NotImplemented()
-
-    def set_latest_snapshot(self, snapname):
-        raise NotImplemented()
-
-    @require_snapdir
+    @require_source
     def snapshot(self, **kwargs):
         return self._snapshot(**kwargs)
 
@@ -64,38 +50,67 @@ class Endpoint:
     def receive(self, *args, **kwargs):
         raise NotImplemented()
 
-    @require_snapdir
-    def list_snapshots(self):
-        return self._list_snapshots(self.snapdir)
+    def list_snapshots(self, flush_cache=False):
+        if self.__cached_snapshots is not None and not flush_cache:
+            logging.debug("Returning {} cached snapshots for "
+                          "{}.".format(len(self.__cached_snapshots), self))
+            return list(self.__cached_snapshots)
+        logging.debug("Building snapshot cache of {} ...".format(self))
+        snapshots = []
+        for item in self._listdir(self.path):
+            if item.startswith(self.snapprefix):
+                time_str = item[len(self.snapprefix):]
+                try:
+                    time_obj = util.str2date(time_str)
+                except ValueError:
+                    # no valid name for current prefix + time string
+                    continue
+                else:
+                    snapshot = util.Snapshot(self.path, self.snapprefix, self,
+                                             time_obj=time_obj)
+                    snapshots.append(snapshot)
+        # sort by date, then time;
+        snapshots.sort()
+        # populate cache
+        self.__cached_snapshots = snapshots
+        logging.debug("Populated snapshot cache of {} with {} "
+                      "items.".format(self, len(snapshots)))
+        return list(snapshots)
 
-    @require_no_snapdir
-    def list_backups(self):
-        return self._list_snapshots(self.path)
+    def add_snapshot(self, snapshot, rewrite=True):
+        if self.__cached_snapshots is None:
+            return None
+        if rewrite:
+            snapshot = util.Snapshot(self.path, snapshot.prefix, self,
+                                     time_obj=snapshot.time_obj)
+        self.__cached_snapshots.append(snapshot)
+        self.__cached_snapshots.sort()
 
-    def delete_snapshots(self, locations, **kwargs):
-        logging.info("Removing {} snapshot(s):".format(len(locations)))
-        for location in locations:
-            logging.info("  {}".format(location))
-        self._delete_snapshots(locations, **kwargs)
+    def delete_snapshots(self, snapshots, **kwargs):
+        logging.info("Removing {} snapshot(s):".format(len(snapshots)))
+        for snapshot in snapshots:
+            logging.info("  {}".format(snapshot))
+        self._delete_snapshots(snapshots, **kwargs)
 
-    def delete_snapshot(self, location, **kwargs):
-        self.delete_snapshots([location], **kwargs)
+    def delete_snapshot(self, snapshot, **kwargs):
+        self.delete_snapshots([snapshot], **kwargs)
 
-    @require_snapdir
     def delete_old_snapshots(self, keep_num, **kwargs):
-        self._delete_old_snapshots(self.snapdir, keep_num, **kwargs)
+        snapshots = self.list_snapshots()
 
-    @require_no_snapdir
-    def delete_old_backups(self, keep_num, **kwargs):
-        self._delete_old_snapshots(self.path, keep_num, **kwargs)
+        if len(snapshots) > keep_num:
+            # delete oldest snapshots
+            to_remove = snapshots[:-keep_num]
+            self.delete_snapshots(to_remove, **kwargs)
 
-    def _build_deletion_cmds(self, locations, convert_rw=False, sync=False):
+    def _build_deletion_cmds(self, snapshots, convert_rw=False, sync=False):
         cmds = []
         if convert_rw:
-            cmds.append(["btrfs", "property", "set", "-ts", location,
-                         "ro", "false"])
+            for snapshot in snapshots:
+                cmds.append(["btrfs", "property", "set", "-ts",
+                             snapshot.get_path(), "ro", "false"])
         cmd = ["btrfs", "subvolume", "delete"]
-        cmd.extend(locations)
+        cmd.extend([snapshot.get_path() for snapshot in snapshots])
         cmds.append(cmd)
         if sync:
             cmds.append(["btrfs", "subvolume", "sync", self.path])
@@ -106,60 +121,28 @@ class Endpoint:
                         "for {}".format(self))
         return []
 
-    def _list_snapshots(self, location):
-        snapnames = []
-        for item in self._listdir(location):
-            if item.startswith(self.snapprefix):
-                time_str = item[len(self.snapprefix):]
-                try:
-                    util.str2date(time_str)
-                except ValueError:
-                    # no valid name for current prefix + time string
-                    continue
-                else:
-                    snapnames.append(item)
-        return snapnames
-
-    def _delete_snapshots(self, locations, **kwargs):
+    def _delete_snapshots(self, snapshots, **kwargs):
         logging.warning("Listing / deleting snapshots is not (yet) supported "
                         "for {}".format(self))
 
-    def _delete_old_snapshots(self, location, keep_num, **kwargs):
-        time_objs = []
-        for item in self._list_snapshots(location):
-            time_str = item[len(self.snapprefix):]
-            try:
-                time_objs.append(util.str2date(time_str))
-            except ValueError:
-                # no valid name for current prefix + time string
-                continue
-
-        # sort by date, then time;
-        time_objs.sort()
-
-        if len(time_objs) > keep_num:
-            # delete oldest snapshots
-            to_remove = []
-            for time_obj in time_objs[:-keep_num]:
-                to_remove.append(os.path.join(location, self.snapprefix +
-                                              util.date2str(time_obj)))
-            self.delete_snapshots(to_remove, **kwargs)
-
 
 class LocalEndpoint(Endpoint):
-    def __init__(self, fstype_check=False, subvol_check=True, **kwargs):
+    def __init__(self, fs_checks=True, **kwargs):
         super(LocalEndpoint, self).__init__(**kwargs)
-        self.path = os.path.abspath(self.path)
-        if self.snapdir and not self.snapdir.startswith("/"):
-            self.snapdir = os.path.join(self.path, self.snapdir)
-        self.fstype_check = fstype_check
-        self.subvol_check = subvol_check
+        if self.source is not None:
+            self.source = os.path.abspath(self.source)
+            if not self.path.startswith("/"):
+                self.path = os.path.join(self.source, self.path)
+        else:
+            self.path = os.path.abspath(self.path)
+        self.fs_checks = fs_checks
 
     def prepare(self):
         # Ensure directories exist
-        dirs = [self.path]
-        if self.snapdir is not None:
-            dirs.append(self.snapdir)
+        dirs = []
+        if self.source is not None:
+            dirs.append(self.source)
+        dirs.append(self.path)
         for d in dirs:
             if os.path.exists(d):
                 logging.debug("Directory exists: {}".format(d))
@@ -171,51 +154,25 @@ class LocalEndpoint(Endpoint):
                     logging.error("Error creating new location {}: "
                                   "{}".format(d, e))
                     raise util.AbortError()
-        if self.fstype_check and not util.is_btrfs(self.path):
+        if self.source is not None and self.fs_checks and \
+           not util.is_subvolume(self.source):
+            logging.error("{} does not seem to be a btrfs "
+                          "subvolume".format(self.source))
+            raise util.AbortError()
+        if self.fs_checks and not util.is_btrfs(self.path):
             logging.error("{} does not seem to be on a btrfs "
                           "filesystem".format(self.path))
             raise util.AbortError()
-        if self.subvol_check and not util.is_subvolume(self.path):
-            logging.error("{} does not seem to be a btrfs "
-                          "subvolume".format(self.path))
-            raise util.AbortError()
 
-    @require_snapdir
-    def get_latest_snapshot(self):
-        latest = os.path.join(self.snapdir, self.lastname)
-        if os.path.islink(latest):
-            real_latest = os.path.realpath(latest)
-            logging.debug("Symlink {} points to {}".format(latest, real_latest))
-            if os.path.exists(real_latest):
-                logging.debug("  -> Link target exists")
-                return os.path.basename(real_latest)
-            else:
-                logging.debug("  -> Link target doesn't exist")
-        else:
-            logging.debug("Symlink {} not found".format(latest))
-        return None
-
-    @require_snapdir
-    def set_latest_snapshot(self, snapname):
-        latest = os.path.join(self.snapdir, self.lastname)
-        if os.path.islink(latest):
-            logging.debug("Unlinking: {}".format(latest))
-            os.unlink(latest)
-        elif os.path.exists(latest):
-            logging.error("Confusion: '{}' should be a symlink".format(latest))
-        # Make .latest point to snapname - use relative symlink
-        logging.debug("Symlinking: {} -> {}".format(snapname, latest))
-        os.symlink(snapname, latest)
-        logging.info("Latest snapshot is now: {}".format(snapname))
-
+    @require_source
     def _snapshot(self, readonly=True, sync=True):
-        snapname = self.snapprefix + util.date2str()
-        snaploc = os.path.join(self.snapdir, snapname)
-        logging.info("{} -> {}".format(self.path, snaploc))
+        snapshot = util.Snapshot(self.path, self.snapprefix, self)
+        snapshot_path = snapshot.get_path()
+        logging.info("{} -> {}".format(self.source, snapshot_path))
         cmd = ["btrfs", "subvolume", "snapshot"]
         if readonly:
             cmd += ["-r"]
-        cmd += [self.path, snaploc]
+        cmd += [self.source, snapshot_path]
         logging.debug("Executing: {}".format(cmd))
         try:
             subprocess.check_output(cmd)
@@ -232,9 +189,9 @@ class LocalEndpoint(Endpoint):
                 subprocess.check_output(cmd)
             except subprocess.CalledProcessError:
                 logging.error("Error on command: {}".format(cmd))
-        return snapname
+        return snapshot
 
-    def send(self, snapname, parent=None):
+    def send(self, snapshot, parent=None):
         """Calls 'btrfs send' for the given snapshot and returns its
            Popen object."""
         cmd = ["btrfs", "send"] + self.btrfs_flags
@@ -243,8 +200,8 @@ class LocalEndpoint(Endpoint):
         if loglevel >= logging.WARNING:
             cmd += ["--quiet"]
         if parent:
-            cmd += ["-p", os.path.join(self.snapdir, parent)]
-        cmd += [os.path.join(self.snapdir, snapname)]
+            cmd += ["-p", parent.get_path()]
+        cmd += [snapshot.get_path()]
         logging.debug("Executing: {}".format(cmd))
         return subprocess.Popen(cmd, stdout=subprocess.PIPE)
 
@@ -258,8 +215,8 @@ class LocalEndpoint(Endpoint):
         logging.debug("Executing: {}".format(cmd))
         return subprocess.Popen(cmd, stdin=stdin, stdout=stdout)
 
-    def _delete_snapshots(self, locations, **kwargs):
-        cmds = self._build_deletion_cmds(locations, **kwargs)
+    def _delete_snapshots(self, snapshots, **kwargs):
+        cmds = self._build_deletion_cmds(snapshots, **kwargs)
         for cmd in cmds:
             logging.debug("Executing: {}".format(cmd))
             try:
@@ -376,8 +333,8 @@ class SSHEndpoint(Endpoint):
                 items.append(item)
         return items
 
-    def _delete_snapshots(self, locations, **kwargs):
-        cmds = self._build_deletion_cmds(locations, **kwargs)
+    def _delete_snapshots(self, snapshots, **kwargs):
+        cmds = self._build_deletion_cmds(snapshots, **kwargs)
         cmd = self._build_ssh_cmd(cmds, multi=True)
         logging.debug("Executing: {}".format(cmd))
         try:
