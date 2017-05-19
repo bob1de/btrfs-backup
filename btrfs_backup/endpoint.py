@@ -34,6 +34,10 @@ class Endpoint:
     def __repr__(self):
         return self.path
 
+    def get_id(self):
+        """Return an id string to identify this endpoint over multiple runs."""
+        return "unknown://{}".format(self.path)
+
     def prepare(self):
         pass
 
@@ -44,7 +48,7 @@ class Endpoint:
     def _snapshot(self, readonly=True, sync=True):
         raise NotImplemented()
 
-    def send(self, *args, **kwargs):
+    def send(self, snapshot, parent=None, clones=None):
         raise NotImplemented()
 
     def receive(self, *args, **kwargs):
@@ -57,7 +61,8 @@ class Endpoint:
             return list(self.__cached_snapshots)
         logging.debug("Building snapshot cache of {} ...".format(self))
         snapshots = []
-        for item in self._listdir(self.path):
+        listdir = self._listdir(self.path)
+        for item in listdir:
             if item.startswith(self.snapprefix):
                 time_str = item[len(self.snapprefix):]
                 try:
@@ -69,6 +74,12 @@ class Endpoint:
                     snapshot = util.Snapshot(self.path, self.snapprefix, self,
                                              time_obj=time_obj)
                     snapshots.append(snapshot)
+
+        # apply locks
+        lock_dict = self._read_locks()
+        for snapshot in snapshots:
+            snapshot.locks.update(lock_dict.get(snapshot.get_name(), []))
+
         # sort by date, then time;
         snapshots.sort()
         # populate cache
@@ -76,6 +87,16 @@ class Endpoint:
         logging.debug("Populated snapshot cache of {} with {} "
                       "items.".format(self, len(snapshots)))
         return list(snapshots)
+
+    def _read_locks(self):
+        """Should read the locks and return a dict like
+           ``util.read_locks`` returns it."""
+        raise NotImplemented()
+
+    def set_lock(self, snapshot, lock_id, lock_state):
+        """Should add/remove the given lock from snapshot and write locks
+           out to permanent storage."""
+        raise NotImplemented()
 
     def add_snapshot(self, snapshot, rewrite=True):
         if self.__cached_snapshots is None:
@@ -86,11 +107,23 @@ class Endpoint:
         self.__cached_snapshots.append(snapshot)
         self.__cached_snapshots.sort()
 
-    def delete_snapshots(self, snapshots, **kwargs):
-        logging.info("Removing {} snapshot(s):".format(len(snapshots)))
+    def delete_snapshots(self, snapshots, ignore_locks=False, **kwargs):
+        # only remove snapshots that have no lock remaining
+        to_remove = []
         for snapshot in snapshots:
-            logging.info("  {}".format(snapshot))
-        self._delete_snapshots(snapshots, **kwargs)
+            if not snapshot.locks or ignore_locks:
+                to_remove.append(snapshot)
+                # remove existing locks, if any
+                for lock in set(snapshot.locks):
+                    self.set_lock(snapshot, lock, False)
+        logging.info("Removing {} snapshot(s):".format(len(to_remove)))
+        for snapshot in snapshots:
+            if snapshot in to_remove:
+                logging.info("  {}".format(snapshot))
+            else:
+                logging.info("  {} - is locked, keeping it".format(snapshot))
+        if to_remove:
+            self._delete_snapshots(to_remove, **kwargs)
 
     def delete_snapshot(self, snapshot, **kwargs):
         self.delete_snapshots([snapshot], **kwargs)
@@ -136,6 +169,12 @@ class LocalEndpoint(Endpoint):
         else:
             self.path = os.path.abspath(self.path)
         self.fs_checks = fs_checks
+        lock_name = ".locks"
+        self.lock_path = os.path.join(self.path, lock_name)
+
+    def get_id(self):
+        """Return an id string to identify this endpoint over multiple runs."""
+        return "local://{}".format(self.path)
 
     def prepare(self):
         # Ensure directories exist
@@ -191,7 +230,7 @@ class LocalEndpoint(Endpoint):
                 logging.error("Error on command: {}".format(cmd))
         return snapshot
 
-    def send(self, snapshot, parent=None):
+    def send(self, snapshot, parent=None, clones=None):
         """Calls 'btrfs send' for the given snapshot and returns its
            Popen object."""
         cmd = ["btrfs", "send"] + self.btrfs_flags
@@ -201,6 +240,9 @@ class LocalEndpoint(Endpoint):
             cmd += ["--quiet"]
         if parent:
             cmd += ["-p", parent.get_path()]
+        if clones:
+            for clone in clones:
+                cmd += ["-c", clone.get_path()]
         cmd += [snapshot.get_path()]
         logging.debug("Executing: {}".format(cmd))
         return subprocess.Popen(cmd, stdout=subprocess.PIPE)
@@ -214,6 +256,36 @@ class LocalEndpoint(Endpoint):
         stdout = subprocess.DEVNULL if loglevel >= logging.WARNING else None
         logging.debug("Executing: {}".format(cmd))
         return subprocess.Popen(cmd, stdin=stdin, stdout=stdout)
+
+    def _read_locks(self):
+        try:
+            if not os.path.isfile(self.lock_path):
+                return {}
+            with open(self.lock_path, "r") as f:
+                return util.read_locks(f.read())
+        except (OSError, ValueError) as e:
+            logging.error("Error on reading lock file {}: "
+                          "{}".format(self.lock_path, e))
+            raise util.AbortError()
+
+    def set_lock(self, snapshot, lock_id, lock_state):
+        try:
+            if lock_state:
+                snapshot.locks.add(lock_id)
+            else:
+                snapshot.locks.remove(lock_id)
+            lock_dict = {}
+            for snapshot in self.list_snapshots():
+                if snapshot.locks:
+                    lock_dict[snapshot.get_name()] = list(snapshot.locks)
+            with open(self.lock_path, "w") as f:
+                f.write(util.write_locks(lock_dict))
+        except OSError as e:
+            logging.error("Error on changing lock file {}: "
+                          "{}".format(self.lock_path, e))
+            raise util.AbortError()
+        logging.debug("Lock state for {} and lock_id {} changed to "
+                      "{}".format(snapshot, lock_id, lock_state))
 
     def _delete_snapshots(self, snapshots, **kwargs):
         cmds = self._build_deletion_cmds(snapshots, **kwargs)
@@ -235,6 +307,10 @@ class ShellEndpoint(Endpoint):
 
     def __repr__(self):
         return "(Shell) " + self.cmd
+
+    def get_id(self):
+        """Return an id string to identify this endpoint over multiple runs."""
+        return "shell://{}".format(self.cmd)
 
     def receive(self, stdin):
         """Calls the given command, setting the given pipe as its stdin.
@@ -259,6 +335,10 @@ class SSHEndpoint(Endpoint):
     def __repr__(self):
         return "(SSH) {}{}".format(
             self._build_connect_string(with_port=True), self.path)
+
+    def get_id(self):
+        """Return an id string to identify this endpoint over multiple runs."""
+        return "ssh://{}{}".format(self.hostname, self.path)
 
     def _build_connect_string(self, with_port=False):
         s = self.hostname

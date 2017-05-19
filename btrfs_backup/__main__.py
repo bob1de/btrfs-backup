@@ -37,14 +37,17 @@ from . import util
 from . import endpoint
 
 
-def send_snapshot(snapshot, dest_endpoint, parent=None, no_progress=False):
+def send_snapshot(snapshot, dest_endpoint, parent=None, clones=None,
+                  no_progress=False):
     # Now we need to send the snapshot (incrementally, if possible)
     logging.info(util.log_heading("Transferring {}".format(snapshot)))
     logging.info("To:           {}".format(dest_endpoint))
     if parent:
         logging.info("Using parent: {}".format(parent))
     else:
-        logging.info("No previous snapshot available, sending full backup.")
+        logging.info("No parent snapshot available, sending full backup.")
+    if clones:
+        logging.info("Using clones: {}".format(clones))
 
     pv = False
     if not no_progress:
@@ -63,7 +66,7 @@ def send_snapshot(snapshot, dest_endpoint, parent=None, no_progress=False):
             pv = True
 
     pipes = []
-    pipes.append(snapshot.endpoint.send(snapshot, parent=parent))
+    pipes.append(snapshot.endpoint.send(snapshot, parent=parent, clones=clones))
 
     if pv:
         cmd = ["pv"]
@@ -82,7 +85,7 @@ def send_snapshot(snapshot, dest_endpoint, parent=None, no_progress=False):
             pids.remove(pid)
         if retcode != 0:
             logging.error("Error during btrfs send / receive")
-            raise util.AbortError()
+            raise util.SnapshotTransferError()
 
 
 def sync_snapshots(src_endpoint, dest_endpoint, keep_num_backups=0, **kwargs):
@@ -122,9 +125,18 @@ def sync_snapshots(src_endpoint, dest_endpoint, keep_num_backups=0, **kwargs):
             return -d if d < 0 else d
         best_snapshot = min(to_transfer, key=key)
         parent = best_snapshot.find_parent(present_snapshots)
-        send_snapshot(best_snapshot, dest_endpoint, parent=parent, **kwargs)
-        dest_endpoint.add_snapshot(best_snapshot)
-        dest_snapshots = dest_endpoint.list_snapshots()
+        lock_id = dest_endpoint.get_id()
+        src_endpoint.set_lock(best_snapshot, lock_id, True)
+        try:
+            send_snapshot(best_snapshot, dest_endpoint, parent=parent,
+                          clones=present_snapshots, **kwargs)
+        except util.SnapshotTransferError:
+            logging.info("Keeping {} locked to prevent it from getting "
+                         "removed.".format(best_snapshot))
+        else:
+            src_endpoint.set_lock(best_snapshot, lock_id, False)
+            dest_endpoint.add_snapshot(best_snapshot)
+            dest_snapshots = dest_endpoint.list_snapshots()
         to_transfer.remove(best_snapshot)
 
     logging.info(util.log_heading("Snapshot transfers complete!"))
@@ -165,6 +177,10 @@ def run():
     parser.add_argument("--latest-only", action="store_true",
                         help="Shortcut for '--num-snapshots 1' (for backwards "
                              "compatibility).")
+    parser.add_argument("--ignore-locks", action="store_true",
+                        help="Force the retention policy - causes snapshots "
+                             "to be removed even when they are locked due to "
+                             "transmission failures.")
     parser.add_argument("-f", "--snapshot-folder",
                         help="Snapshot folder in source filesystem; "
                              "either relative to source or absolute.")
@@ -215,12 +231,15 @@ def run():
     logging.debug("Enable btrfs debugging: {}".format(args.btrfs_debug))
     logging.debug("Don't display progress: {}".format(args.no_progress))
     logging.debug("Skip filesystem checks: {}".format(args.skip_fs_checks))
-    logging.debug("Convert subvolumes to read-write before deletion: {}".format(
-        args.convert_rw))
+    logging.debug("Convert subvolumes to read-write before deletion: "
+                  "{}".format(args.convert_rw))
     logging.debug("Run 'btrfs subvolume sync' afterwards: {}".format(args.sync))
     logging.debug("Number of snapshots to keep: {}".format(args.num_snapshots))
-    logging.debug("Number of backups to keep: {}".format(
-        args.num_backups if args.num_backups > 0 else "Any"))
+    logging.debug("Number of backups to keep: "
+                  "{}".format(args.num_backups if args.num_backups > 0
+                              else "Any"))
+    logging.debug("Ignore locks when deleting snapshots: "
+                  "{}".format(args.ignore_locks))
     logging.debug("Extra SSH config options: {}".format(args.ssh_opt))
 
     # kwargs that are common between all endpoints
@@ -293,6 +312,7 @@ def run():
     # cleanup snapshots > num_snapshots in snapdir
     if args.num_snapshots > 0:
         src_endpoint.delete_old_snapshots(args.num_snapshots,
+                                          ignore_locks=args.ignore_locks,
                                           convert_rw=args.convert_rw,
                                           sync=args.sync)
     # cleanup backups > num_backups in backup target

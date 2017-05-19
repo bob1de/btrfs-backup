@@ -1,6 +1,7 @@
 import functools
 import os
 import time
+import json
 import argparse
 import logging
 
@@ -21,8 +22,38 @@ class ArgparseSmartFormatter(argparse.HelpFormatter):
             lines.extend(argparse.HelpFormatter._split_lines(self, line, width))
         return lines
 
+def read_locks(s):
+    """Reads locks from lock file content given as string.
+       Returns ``{'snapname': ['lock', ...], ...}``.
+       If format is invalid, ``ValueError`` is raised."""
+    s = s.strip()
+    lock_dict = {}
+    if not s:
+        return lock_dict
+    try:
+        content = json.loads(s)
+        assert isinstance(content, dict)
+        for snapname, locks in content.items():
+            assert isinstance(snapname, str)
+            assert isinstance(locks, list)
+            lock_dict[snapname] = []
+            for lock in locks:
+                assert isinstance(lock, str)
+                lock_dict[snapname].append(lock)
+    except (AssertionError, json.JSONDecodeError) as e:
+        logging.error("Lock file couldn't be parsed: {}".format(e))
+        raise ValueError("invalid lock file format")
+    return lock_dict
+
+def write_locks(lock_dict):
+    """Converts ``lock_dict`` back to the string readable by ``read_locks``."""
+    return json.dumps(lock_dict, indent=4)
+
 
 class AbortError(Exception):
+    pass
+
+class SnapshotTransferError(AbortError):
     pass
 
 
@@ -36,6 +67,7 @@ class Snapshot:
         if time_obj is None:
             time_obj = str2date()
         self.time_obj = time_obj
+        self.locks = set()
 
     def __eq__(self, other):
         return self.prefix == other.prefix and self.time_obj == other.time_obj
