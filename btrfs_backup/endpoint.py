@@ -92,8 +92,9 @@ class Endpoint:
     def _build_deletion_cmds(self, locations, convert_rw=False, sync=False):
         cmds = []
         if convert_rw:
-            cmds.append(["btrfs", "property", "set", "-ts", location,
-                         "ro", "false"])
+            for location in locations:
+                cmds.append(["btrfs", "property", "set", "-ts", location,
+                             "ro", "false"])
         cmd = ["btrfs", "subvolume", "delete"]
         cmd.extend(locations)
         cmds.append(cmd)
