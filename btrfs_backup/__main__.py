@@ -41,7 +41,6 @@ def send_snapshot(snapshot, dest_endpoint, parent=None, clones=None,
                   no_progress=False):
     # Now we need to send the snapshot (incrementally, if possible)
     logging.info(util.log_heading("Transferring {}".format(snapshot)))
-    logging.info("To:           {}".format(dest_endpoint))
     if parent:
         logging.info("Using parent: {}".format(parent))
     else:
@@ -89,7 +88,8 @@ def send_snapshot(snapshot, dest_endpoint, parent=None, clones=None,
 
 
 def sync_snapshots(src_endpoint, dest_endpoint, keep_num_backups=0, **kwargs):
-    logging.info(util.log_heading("Transferring snapshots ..."))
+    logging.info(util.log_heading("Transferring to {} "
+                                  "...".format(dest_endpoint)))
 
     src_snapshots = src_endpoint.list_snapshots()
     dest_snapshots = dest_endpoint.list_snapshots()
@@ -167,6 +167,9 @@ def run():
     parser.add_argument("-s", "--sync", action="store_true",
                         help="Run 'btrfs subvolume sync' after deleting "
                              "subvolumes.")
+    parser.add_argument("--no-snapshot", action="store_true",
+                        help="Don't take a new snapshot, just transfer "
+                             "existing ones.")
     parser.add_argument("-N", "--num-snapshots", type=int, default=0,
                         help="Only keep latest n snapshots on source "
                              "filesystem.")
@@ -193,12 +196,18 @@ def run():
                              "would result in 'ssh -o Cipher=aes256-ctr "
                              "-o IdentityFile=/root/id_rsa'.")
     parser.add_argument("source", help="Subvolume to backup.")
-    parser.add_argument("dest",
+    parser.add_argument("dest", nargs="*",
                         help="N|Destination to send backups to.\n"
                              "The following schemes are possible:\n"
                              " - /path/to/backups\n"
                              " - 'shell://cat > some-file'\n"
-                             " - ssh://[user@]host[:port]/path/to/backups")
+                             " - ssh://[user@]host[:port]/path/to/backups\n"
+                             "You may use this argument multiple times to "
+                             "transfer backups to multiple locations. "
+                             "You may even omit it completely in what case "
+                             "no snapshot is transferred at all. That allows, "
+                             "for instance, for well-organized local "
+                             "snapshotting without backing up.")
     args = parser.parse_args()
 
     # applying shortcuts
@@ -234,6 +243,7 @@ def run():
     logging.debug("Convert subvolumes to read-write before deletion: "
                   "{}".format(args.convert_rw))
     logging.debug("Run 'btrfs subvolume sync' afterwards: {}".format(args.sync))
+    logging.debug("Don't take a new snapshot: {}".format(args.no_snapshot))
     logging.debug("Number of snapshots to keep: {}".format(args.num_snapshots))
     logging.debug("Number of backups to keep: "
                   "{}".format(args.num_backups if args.num_backups > 0
@@ -255,58 +265,63 @@ def run():
     logging.debug("Source: {}".format(src))
     logging.debug("Source endpoint: {}".format(src_endpoint))
 
-    # parse destination string
-    dest = args.dest
-    if dest.startswith("shell://"):
-        dest_type = "shell"
-        dest_cmd = dest[8:]
-        dest_endpoint = endpoint.ShellEndpoint(cmd=dest_cmd, **endpoint_kwargs)
-    elif dest.startswith("ssh://"):
-        dest_type = "ssh"
-        parsed_dest = urllib.parse.urlparse(dest)
-        if not parsed_dest.hostname:
-            logging.error("No hostname for SSH specified.")
-            raise util.AbortError()
-        try:
-            port = parsed_dest.port
-        except ValueError:
-            # invalid literal for int ...
-            port = None
-        dest_path = parsed_dest.path.strip() or "/"
-        if parsed_dest.query:
-            dest_path += "?" + parsed_dest.query
-        dest_path = os.path.normpath(dest_path)
-        dest_endpoint = endpoint.SSHEndpoint(
-            username=parsed_dest.username,
-            hostname=parsed_dest.hostname,
-            port=port,
-            path=dest_path,
-            ssh_opts=args.ssh_opt,
+    dest_endpoints = []
+    for dest in args.dest:
+        # parse destination string
+        if dest.startswith("shell://"):
+            dest_type = "shell"
+            dest_cmd = dest[8:]
+            dest_endpoint = endpoint.ShellEndpoint(cmd=dest_cmd, **endpoint_kwargs)
+        elif dest.startswith("ssh://"):
+            dest_type = "ssh"
+            parsed_dest = urllib.parse.urlparse(dest)
+            if not parsed_dest.hostname:
+                logging.error("No hostname for SSH specified.")
+                raise util.AbortError()
+            try:
+                port = parsed_dest.port
+            except ValueError:
+                # invalid literal for int ...
+                port = None
+            dest_path = parsed_dest.path.strip() or "/"
+            if parsed_dest.query:
+                dest_path += "?" + parsed_dest.query
+            dest_path = os.path.normpath(dest_path)
+            dest_endpoint = endpoint.SSHEndpoint(
+                username=parsed_dest.username,
+                hostname=parsed_dest.hostname,
+                port=port,
+                path=dest_path,
+                ssh_opts=args.ssh_opt,
             btrfs_debug=args.btrfs_debug,
-            **endpoint_kwargs)
-    else:
-        dest_type = "local"
-        dest_path = dest
-        dest_endpoint = endpoint.LocalEndpoint(
-            path=dest_path,
-            btrfs_debug=args.btrfs_debug,
-            fs_checks=not args.skip_fs_checks,
-            **endpoint_kwargs)
-    logging.debug("Destination type: {}".format(dest_type))
-    logging.debug("Destination: {}".format(dest))
-    logging.debug("Destination endpoint: {}".format(dest_endpoint))
+                **endpoint_kwargs)
+        else:
+            dest_type = "local"
+            dest_path = dest
+            dest_endpoint = endpoint.LocalEndpoint(
+                path=dest_path,
+                btrfs_debug=args.btrfs_debug,
+                fs_checks=not args.skip_fs_checks,
+                **endpoint_kwargs)
+        dest_endpoints.append(dest_endpoint)
+        logging.debug("Destination type: {}".format(dest_type))
+        logging.debug("Destination: {}".format(dest))
+        logging.debug("Destination endpoint: {}".format(dest_endpoint))
 
     logging.info(util.log_heading("Preparing endpoints ..."))
     src_endpoint.prepare()
-    dest_endpoint.prepare()
+    for dest_endpoint in dest_endpoints:
+        dest_endpoint.prepare()
 
-    # First we need to create a new snapshot on the source disk
-    logging.info(util.log_heading("Snapshotting ..."))
-    sourcesnap = src_endpoint.snapshot()
+    if not args.no_snapshot:
+        # First we need to create a new snapshot on the source disk
+        logging.info(util.log_heading("Snapshotting ..."))
+        src_endpoint.snapshot()
 
-    sync_snapshots(src_endpoint, dest_endpoint,
-                   keep_num_backups=args.num_backups,
-                   no_progress=args.no_progress)
+    for dest_endpoint in dest_endpoints:
+        sync_snapshots(src_endpoint, dest_endpoint,
+                       keep_num_backups=args.num_backups,
+                       no_progress=args.no_progress)
 
     logging.info(util.log_heading("Cleaning up ..."))
     # cleanup snapshots > num_snapshots in snapdir
@@ -317,9 +332,10 @@ def run():
                                           sync=args.sync)
     # cleanup backups > num_backups in backup target
     if args.num_backups > 0:
-        dest_endpoint.delete_old_snapshots(args.num_backups,
-                                           convert_rw=args.convert_rw,
-                                           sync=args.sync)
+        for dest_endpoint in dest_endpoints:
+            dest_endpoint.delete_old_snapshots(args.num_backups,
+                                               convert_rw=args.convert_rw,
+                                               sync=args.sync)
 
     logging.info(util.log_heading("Finished at {}".format(time.ctime())))
 
