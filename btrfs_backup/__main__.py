@@ -150,7 +150,16 @@ def sync_snapshots(src_endpoint, dest_endpoint, keep_num_backups=0, **kwargs):
 
 def run():
     # Parse command line arguments
-    parser = argparse.ArgumentParser(description="Incremental btrfs backup",
+    description = """\
+This provides incremental backups for btrfs filesystems. It can be
+used for taking regular backups of any btrfs subvolume and syncing them
+with local and/or remote locations. Multiple targets are supported as
+well as retention settings for both source snapshots and backups. If
+a snapshot transfer fails for any reason (e.g. due to network outage),
+btrfs-backup will notice it and prevent the snapshot from being deleted
+until it finally maked it over to its destination.
+"""
+    parser = argparse.ArgumentParser(description=description,
                                      formatter_class=util.ArgparseSmartFormatter,
                                      add_help=False)
 

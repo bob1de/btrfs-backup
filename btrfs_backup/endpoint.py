@@ -274,10 +274,11 @@ class LocalEndpoint(Endpoint):
             for snapshot in self.list_snapshots():
                 if snapshot.locks:
                     lock_dict[snapshot.get_name()] = list(snapshot.locks)
+            logging.debug("Writing lock file: {}".format(self.lock_path))
             with open(self.lock_path, "w") as f:
                 f.write(util.write_locks(lock_dict))
         except OSError as e:
-            logging.error("Error on changing lock file {}: "
+            logging.error("Error on writing lock file {}: "
                           "{}".format(self.lock_path, e))
             raise util.AbortError()
         logging.debug("Lock state for {} and lock_id {} changed to "
