@@ -21,10 +21,6 @@ class Endpoint:
         self.path = path
         self.snapprefix = snapprefix
         self.source = source
-        if snapprefix:
-            self.lastname = "." + snapprefix + "_latest"
-        else:
-            self.lastname = ".latest"
         self.btrfs_debug = btrfs_debug
         self.btrfs_flags = []
         if self.btrfs_debug:
@@ -169,7 +165,7 @@ class LocalEndpoint(Endpoint):
         else:
             self.path = os.path.abspath(self.path)
         self.fs_checks = fs_checks
-        lock_name = ".locks"
+        lock_name = ".outstanding_transfers"
         self.lock_path = os.path.join(self.path, lock_name)
 
     def get_id(self):

@@ -93,6 +93,7 @@ def sync_snapshots(src_endpoint, dest_endpoint, keep_num_backups=0, **kwargs):
 
     src_snapshots = src_endpoint.list_snapshots()
     dest_snapshots = dest_endpoint.list_snapshots()
+    dest_endpoint_id = dest_endpoint.get_id()
 
     logging.debug("Planning transmissions ...")
     to_consider = src_snapshots
@@ -109,13 +110,18 @@ def sync_snapshots(src_endpoint, dest_endpoint, keep_num_backups=0, **kwargs):
             continue
         to_transfer.append(snapshot)
 
+    if not to_transfer:
+        logging.info("No snapshots need to be transferred.")
+        return
+
     logging.info("Going to transfer {} snapshot(s):".format(len(to_transfer)))
     for snapshot in to_transfer:
         logging.info("  {}".format(snapshot))
 
     while to_transfer:
         present_snapshots = [s for s in src_snapshots
-                             if s in dest_snapshots]
+                             if s in dest_snapshots and
+                                dest_endpoint_id not in s.locks]
         # choose snapshot with smallest distance to its parent
         def key(s):
             p = s.find_parent(present_snapshots)
@@ -145,69 +151,91 @@ def sync_snapshots(src_endpoint, dest_endpoint, keep_num_backups=0, **kwargs):
 def run():
     # Parse command line arguments
     parser = argparse.ArgumentParser(description="Incremental btrfs backup",
-                                     formatter_class=util.ArgparseSmartFormatter)
-    parser.add_argument("-v", "--verbosity", default="info",
-                        choices=["debug", "info", "warning", "error"],
-                        help="set verbosity level")
-    parser.add_argument("-q", "--quiet", action="store_true",
-                        help="Shortcut for '--no-progress --verbosity "
-                             "warning'.")
-    parser.add_argument("-d", "--btrfs-debug", action="store_true",
-                        help="Enable debugging on btrfs send / receive.")
-    parser.add_argument("-P", "--no-progress", action="store_true",
-                        help="Don't display progress and stats during backup.")
-    parser.add_argument("-C", "--skip-fs-checks", action="store_true",
-                        help="Don't check whether source / destination is a "
-                             "btrfs subvolume / filesystem.")
-    parser.add_argument("-w", "--convert-rw", action="store_true",
-                        help="Convert read-only snapshots to read-write "
-                             "before deleting them. This allows regular users "
-                             "to delete subvolumes when mount option "
-                             "user_subvol_rm_allowed is enabled.")
-    parser.add_argument("-s", "--sync", action="store_true",
-                        help="Run 'btrfs subvolume sync' after deleting "
-                             "subvolumes.")
-    parser.add_argument("--no-snapshot", action="store_true",
-                        help="Don't take a new snapshot, just transfer "
-                             "existing ones.")
-    parser.add_argument("-N", "--num-snapshots", type=int, default=0,
-                        help="Only keep latest n snapshots on source "
-                             "filesystem.")
-    parser.add_argument("-n", "--num-backups", type=int, default=0,
-                        help="Only keep latest n backups at destination. "
-                             "This option is not supported for 'shell://' "
-                             "storage.")
-    parser.add_argument("--latest-only", action="store_true",
-                        help="Shortcut for '--num-snapshots 1' (for backwards "
-                             "compatibility).")
-    parser.add_argument("--ignore-locks", action="store_true",
-                        help="Force the retention policy - causes snapshots "
-                             "to be removed even when they are locked due to "
-                             "transmission failures.")
-    parser.add_argument("-f", "--snapshot-folder",
-                        help="Snapshot folder in source filesystem; "
-                             "either relative to source or absolute.")
-    parser.add_argument("-p", "--snapshot-prefix",
-                        help="Prefix for snapshot names.")
-    parser.add_argument("--ssh-opt", action="append",
-                        help="N|Pass extra ssh_config options to ssh(1).\n"
-                             "Example: '--ssh-opt Cipher=aes256-ctr --ssh-opt "
-                             "IdentityFile=/root/id_rsa'\n"
-                             "would result in 'ssh -o Cipher=aes256-ctr "
-                             "-o IdentityFile=/root/id_rsa'.")
-    parser.add_argument("source", help="Subvolume to backup.")
-    parser.add_argument("dest", nargs="*",
-                        help="N|Destination to send backups to.\n"
-                             "The following schemes are possible:\n"
-                             " - /path/to/backups\n"
-                             " - 'shell://cat > some-file'\n"
-                             " - ssh://[user@]host[:port]/path/to/backups\n"
-                             "You may use this argument multiple times to "
-                             "transfer backups to multiple locations. "
-                             "You may even omit it completely in what case "
-                             "no snapshot is transferred at all. That allows, "
-                             "for instance, for well-organized local "
-                             "snapshotting without backing up.")
+                                     formatter_class=util.ArgparseSmartFormatter,
+                                     add_help=False)
+
+    group = parser.add_argument_group("Display settings")
+    group.add_argument("-h", "--help", action="help",
+                       help="Show this help message and exit.")
+    group.add_argument("-v", "--verbosity", default="info",
+                       choices=["debug", "info", "warning", "error"],
+                       help="Set verbosity level. Default is 'info'.")
+    group.add_argument("-q", "--quiet", action="store_true",
+                       help="Shortcut for '--no-progress --verbosity "
+                            "warning'.")
+    group.add_argument("-d", "--btrfs-debug", action="store_true",
+                       help="Enable debugging on btrfs send / receive.")
+    group.add_argument("-P", "--no-progress", action="store_true",
+                       help="Don't display progress and stats during backup.")
+
+    group = parser.add_argument_group("Retention settings")
+    group.add_argument("-N", "--num-snapshots", type=int, default=0,
+                       help="Only keep latest n snapshots on source "
+                            "filesystem.")
+    group.add_argument("-n", "--num-backups", type=int, default=0,
+                       help="Only keep latest n backups at destination. "
+                            "This option is not supported for 'shell://' "
+                            "storage.")
+    group.add_argument("--ignore-locks", action="store_true",
+                       help="Force the retention policy - causes snapshots "
+                            "to be removed even when they are locked due to "
+                            "transmission failures.")
+
+    group = parser.add_argument_group("Snapshot settings")
+    group.add_argument("--no-snapshot", action="store_true",
+                       help="Don't take a new snapshot, just transfer "
+                            "existing ones.")
+    group.add_argument("-f", "--snapshot-folder",
+                       help="Snapshot folder in source filesystem; "
+                            "either relative to source or absolute. "
+                            "Default is 'snapshot'.")
+    group.add_argument("-p", "--snapshot-prefix",
+                       help="Prefix for snapshot names. Default is ''.")
+
+    group = parser.add_argument_group("Miscellaneous options")
+    group.add_argument("-C", "--skip-fs-checks", action="store_true",
+                       help="Don't check whether source / destination is a "
+                            "btrfs subvolume / filesystem.")
+    group.add_argument("-s", "--sync", action="store_true",
+                       help="Run 'btrfs subvolume sync' after deleting "
+                            "subvolumes.")
+    group.add_argument("-w", "--convert-rw", action="store_true",
+                       help="Convert read-only snapshots to read-write "
+                            "before deleting them. This allows regular users "
+                            "to delete subvolumes when mount option "
+                            "user_subvol_rm_allowed is enabled.")
+    group.add_argument("--ssh-opt", action="append",
+                       help="N|Pass extra ssh_config options to ssh(1).\n"
+                            "Example: '--ssh-opt Cipher=aes256-ctr --ssh-opt "
+                            "IdentityFile=/root/id_rsa'\n"
+                            "would result in 'ssh -o Cipher=aes256-ctr "
+                            "-o IdentityFile=/root/id_rsa'.")
+
+    # for backwards compatibility only
+    group = parser.add_argument_group("Deprecated options",
+                                      description="These options are available "
+                                                  "for backwards compatibility "
+                                                  "only and will be removed in "
+                                                  "future versions. Please "
+                                                  "stop using them.")
+    group.add_argument("--latest-only", action="store_true",
+                       help="Shortcut for '--num-snapshots 1'.")
+
+    group = parser.add_argument_group("Source and destination")
+    group.add_argument("source", help="Subvolume to backup.")
+    group.add_argument("dest", nargs="*",
+                       help="N|Destination to send backups to.\n"
+                            "The following schemes are possible:\n"
+                            " - /path/to/backups\n"
+                            " - 'shell://cat > some-file'\n"
+                            " - ssh://[user@]host[:port]/path/to/backups\n"
+                            "You may use this argument multiple times to "
+                            "transfer backups to multiple locations. "
+                            "You may even omit it completely in what case "
+                            "no snapshot is transferred at all. That allows, "
+                            "for instance, for well-organized local "
+                            "snapshotting without backing up.")
+
     args = parser.parse_args()
 
     # applying shortcuts
