@@ -2,10 +2,12 @@
 
 from setuptools import setup
 
+from btrfs_backup import __version__
+
 setup(
     name = "btrfs_backup",
-    description = "Incremental backups for btrfs",
-    version = "0.2",
+    description = "Intelligent, feature-rich backups for btrfs",
+    version = __version__,
     url = "https://github.com/efficiosoft/btrfs-backup",
     author = "Robert Schindler",
     author_email = "r.schindler@efficiosoft.com",

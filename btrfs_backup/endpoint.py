@@ -16,15 +16,17 @@ def require_source(method):
 
 
 class Endpoint:
-    def __init__(self, path=None, snapprefix="", source=None,
-                 btrfs_debug=False):
+    def __init__(self, path=None, snapprefix="", convert_rw=False,
+                 subvolume_sync=False, btrfs_debug=False, source=None):
         self.path = path
         self.snapprefix = snapprefix
-        self.source = source
         self.btrfs_debug = btrfs_debug
         self.btrfs_flags = []
         if self.btrfs_debug:
             self.btrfs_flags += ["-vv"]
+        self.convert_rw = convert_rw
+        self.subvolume_sync = subvolume_sync
+        self.source = source
         self.__cached_snapshots = None
 
     def __repr__(self):
@@ -87,7 +89,7 @@ class Endpoint:
     def _read_locks(self):
         """Should read the locks and return a dict like
            ``util.read_locks`` returns it."""
-        raise NotImplemented()
+        return {}
 
     def set_lock(self, snapshot, lock_id, lock_state):
         """Should add/remove the given lock from snapshot and write locks
@@ -112,7 +114,8 @@ class Endpoint:
                 # remove existing locks, if any
                 for lock in set(snapshot.locks):
                     self.set_lock(snapshot, lock, False)
-        logging.info("Removing {} snapshot(s):".format(len(to_remove)))
+        logging.info("Removing {} snapshot(s) from "
+                     "{}:".format(len(to_remove), self))
         for snapshot in snapshots:
             if snapshot in to_remove:
                 logging.info("  {}".format(snapshot))
@@ -120,6 +123,12 @@ class Endpoint:
                 logging.info("  {} - is locked, keeping it".format(snapshot))
         if to_remove:
             self._delete_snapshots(to_remove, **kwargs)
+            if self.__cached_snapshots is not None:
+                for snapshot in to_remove:
+                    try:
+                        self.__cached_snapshots.remove(snapshot)
+                    except ValueError:
+                        pass
 
     def delete_snapshot(self, snapshot, **kwargs):
         self.delete_snapshots([snapshot], **kwargs)
@@ -132,7 +141,12 @@ class Endpoint:
             to_remove = snapshots[:-keep_num]
             self.delete_snapshots(to_remove, **kwargs)
 
-    def _build_deletion_cmds(self, snapshots, convert_rw=False, sync=False):
+    def _build_deletion_cmds(self, snapshots, convert_rw=None,
+                             subvolume_sync=None):
+        if convert_rw is None:
+            convert_rw = self.convert_rw
+        if subvolume_sync is None:
+            subvolume_sync = self.subvolume_sync
         cmds = []
         if convert_rw:
             for snapshot in snapshots:
@@ -141,7 +155,7 @@ class Endpoint:
         cmd = ["btrfs", "subvolume", "delete"]
         cmd.extend([snapshot.get_path() for snapshot in snapshots])
         cmds.append(cmd)
-        if sync:
+        if subvolume_sync:
             cmds.append(["btrfs", "subvolume", "sync", self.path])
         return cmds
 
@@ -170,7 +184,7 @@ class LocalEndpoint(Endpoint):
 
     def get_id(self):
         """Return an id string to identify this endpoint over multiple runs."""
-        return "local://{}".format(self.path)
+        return self.path
 
     def prepare(self):
         # Ensure directories exist
@@ -269,11 +283,11 @@ class LocalEndpoint(Endpoint):
             if lock_state:
                 snapshot.locks.add(lock_id)
             else:
-                snapshot.locks.remove(lock_id)
+                snapshot.locks.discard(lock_id)
             lock_dict = {}
-            for snapshot in self.list_snapshots():
-                if snapshot.locks:
-                    lock_dict[snapshot.get_name()] = list(snapshot.locks)
+            for _snapshot in self.list_snapshots():
+                if _snapshot.locks:
+                    lock_dict[_snapshot.get_name()] = list(_snapshot.locks)
             logging.debug("Writing lock file: {}".format(self.lock_path))
             with open(self.lock_path, "w") as f:
                 f.write(util.write_locks(lock_dict))
@@ -290,8 +304,10 @@ class LocalEndpoint(Endpoint):
             logging.debug("Executing: {}".format(cmd))
             try:
                 subprocess.check_output(cmd)
-            except subprocess.CalledProcessError:
-                logging.error("Error on command: {}".format(cmd))
+            except subprocess.CalledProcessError as e:
+                logging.debug("  -> got exception: {}".format(e))
+                logging.error("Couldn't delete snapshots at {}".format(self))
+                raise util.AbortError()
 
     def _listdir(self, location):
         return os.listdir(location)
@@ -319,6 +335,10 @@ class ShellEndpoint(Endpoint):
         return subprocess.Popen(self.cmd, stdin=stdin, stdout=stdout,
                                 shell=True)
 
+    def add_snapshot(self, *args, **kwargs):
+        """Adding not supported. This is just a stub."""
+        pass
+
 
 class SSHEndpoint(Endpoint):
     def __init__(self, hostname, port=None, username=None, ssh_opts=None,
@@ -335,7 +355,12 @@ class SSHEndpoint(Endpoint):
 
     def get_id(self):
         """Return an id string to identify this endpoint over multiple runs."""
-        return "ssh://{}{}".format(self.hostname, self.path)
+        s = self.hostname
+        if self.username:
+            s = "{}@{}".format(self.username, s)
+        if self.port:
+            s = "{}:{}".format(s, self.port)
+        return "ssh://{}{}".format(s, self.path)
 
     def _build_connect_string(self, with_port=False):
         s = self.hostname
@@ -401,8 +426,8 @@ class SSHEndpoint(Endpoint):
             output = subprocess.check_output(cmd, universal_newlines=True)
         except subprocess.CalledProcessError as e:
             logging.debug("  -> got exception: {}".format(e))
-            logging.warning("Couldn't list {} at {}".format(location, self))
-            return []
+            logging.error("Couldn't list {} at {}".format(location, self))
+            raise util.AbortError()
         items = []
         for item in output.splitlines():
             # remove . and ..
@@ -418,4 +443,5 @@ class SSHEndpoint(Endpoint):
             subprocess.check_output(cmd, universal_newlines=True)
         except subprocess.CalledProcessError as e:
             logging.debug("  -> got exception: {}".format(e))
-            logging.warning("Couldn't delete snapshots at {}".format(self))
+            logging.error("Couldn't delete snapshots at {}".format(self))
+            raise util.AbortError()

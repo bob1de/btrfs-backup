@@ -23,7 +23,7 @@ The old code base has been tagged with ``legacy``. If, for any reason,
 you want to continue using it and miss the new features, you can check
 that out.
 
-:Latest release: v0.2
+:Latest release: v0.3.0
 :Downloads: http://pypi.python.org/pypi/btrfs_backup
 :Source: https://github.com/efficiosoft/btrfs-backup
 :Platforms: Linux >= 3.12, Python >= 3.3
@@ -81,7 +81,7 @@ Alternatively, clone this git repository
 
     $ git clone https://github.com/efficiosoft/btrfs-backup
     $ cd btrfs-backup
-    $ git checkout tags/v0.2  # optionally checkout a specific version
+    $ git checkout tags/v0.3.0  # optionally checkout a specific version
     $ sudo ./setup.py install
 
 

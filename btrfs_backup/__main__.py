@@ -93,22 +93,33 @@ def sync_snapshots(src_endpoint, dest_endpoint, keep_num_backups=0, **kwargs):
 
     src_snapshots = src_endpoint.list_snapshots()
     dest_snapshots = dest_endpoint.list_snapshots()
-    dest_endpoint_id = dest_endpoint.get_id()
+    dest_id = dest_endpoint.get_id()
+
+    # delete corrupt snapshots from destination
+    to_remove = []
+    for snapshot in src_snapshots:
+        if snapshot in dest_snapshots and dest_id in snapshot.locks:
+            # seems to have failed previously and is present at
+            # destination; delete corrupt snapshot there
+            dest_snapshot = dest_snapshots[dest_snapshots.index(snapshot)]
+            logging.info("Potentially corrupt snapshot {} found at "
+                         "{}".format(dest_snapshot, dest_endpoint))
+            to_remove.append(dest_snapshot)
+    if to_remove:
+        dest_endpoint.delete_snapshots(to_remove, subvolume_sync=False)
 
     logging.debug("Planning transmissions ...")
     to_consider = src_snapshots
     if keep_num_backups > 0:
-        # It wouldn't make sense to transfer snapshots that would be deleted
-        # afterwards anyway.
+        # it wouldn't make sense to transfer snapshots that would be deleted
+        # afterwards anyway
         to_consider = to_consider[-keep_num_backups:]
 
     to_transfer = []
     for snapshot in to_consider:
-        # filter source snapshots for only those already transferred
-        if snapshot in dest_snapshots:
-            # already transferred
-            continue
-        to_transfer.append(snapshot)
+        if snapshot not in dest_snapshots or dest_id in snapshot.locks:
+            # not yet transferred or previously failed
+            to_transfer.append(snapshot)
 
     if not to_transfer:
         logging.info("No snapshots need to be transferred.")
@@ -119,9 +130,11 @@ def sync_snapshots(src_endpoint, dest_endpoint, keep_num_backups=0, **kwargs):
         logging.info("  {}".format(snapshot))
 
     while to_transfer:
+        # pick the snapshots common among source and dest,
+        # exclude those that had a failed transfer before
         present_snapshots = [s for s in src_snapshots
                              if s in dest_snapshots and
-                                dest_endpoint_id not in s.locks]
+                                dest_id not in s.locks]
         # choose snapshot with smallest distance to its parent
         def key(s):
             p = s.find_parent(present_snapshots)
@@ -131,8 +144,7 @@ def sync_snapshots(src_endpoint, dest_endpoint, keep_num_backups=0, **kwargs):
             return -d if d < 0 else d
         best_snapshot = min(to_transfer, key=key)
         parent = best_snapshot.find_parent(present_snapshots)
-        lock_id = dest_endpoint.get_id()
-        src_endpoint.set_lock(best_snapshot, lock_id, True)
+        src_endpoint.set_lock(best_snapshot, dest_id, True)
         try:
             send_snapshot(best_snapshot, dest_endpoint, parent=parent,
                           clones=present_snapshots, **kwargs)
@@ -140,7 +152,7 @@ def sync_snapshots(src_endpoint, dest_endpoint, keep_num_backups=0, **kwargs):
             logging.info("Keeping {} locked to prevent it from getting "
                          "removed.".format(best_snapshot))
         else:
-            src_endpoint.set_lock(best_snapshot, lock_id, False)
+            src_endpoint.set_lock(best_snapshot, dest_id, False)
             dest_endpoint.add_snapshot(best_snapshot)
             dest_snapshots = dest_endpoint.list_snapshots()
         to_transfer.remove(best_snapshot)
@@ -159,9 +171,15 @@ a snapshot transfer fails for any reason (e.g. due to network outage),
 btrfs-backup will notice it and prevent the snapshot from being deleted
 until it finally maked it over to its destination.
 """
-    parser = argparse.ArgumentParser(description=description,
+    epilog = """\
+You may also pass one or more file names prefixed with '@' at the command
+line. In this case, arguments are read from that file, treating each
+line as an argument you would normally pass directly. Mixing of direct
+arguments and argument files is allowed as well.
+"""
+    parser = argparse.ArgumentParser(description=description, epilog=epilog,
                                      formatter_class=util.ArgparseSmartFormatter,
-                                     add_help=False)
+                                     add_help=False, fromfile_prefix_chars="@")
 
     group = parser.add_argument_group("Display settings")
     group.add_argument("-h", "--help", action="help",
@@ -231,6 +249,9 @@ until it finally maked it over to its destination.
                        help="Shortcut for '--num-snapshots 1'.")
 
     group = parser.add_argument_group("Source and destination")
+    group.add_argument("--retry-outstanding", action="store_true",
+                       help="Retry all outstanding transfers without manually "
+                            "having to specify the destinations.")
     group.add_argument("source", help="Subvolume to backup.")
     group.add_argument("dest", nargs="*",
                        help="N|Destination to send backups to.\n"
@@ -290,17 +311,29 @@ until it finally maked it over to its destination.
     logging.debug("Extra SSH config options: {}".format(args.ssh_opt))
 
     # kwargs that are common between all endpoints
-    endpoint_kwargs = {"snapprefix": snapprefix}
+    endpoint_kwargs = {"snapprefix": snapprefix,
+                       "convert_rw": args.convert_rw,
+                       "subvolume_sync": args.sync,
+                       "btrfs_debug": args.btrfs_debug}
 
     src = os.path.abspath(args.source)
     src_endpoint = endpoint.LocalEndpoint(
         path=snapdir,
         source=src,
-        btrfs_debug=args.btrfs_debug,
         fs_checks=not args.skip_fs_checks,
         **endpoint_kwargs)
     logging.debug("Source: {}".format(src))
     logging.debug("Source endpoint: {}".format(src_endpoint))
+
+    logging.info("Preparing endpoint {} ...".format(src_endpoint))
+    src_endpoint.prepare()
+
+    # add endpoint creation strings for outstanding transfers, if desired
+    if args.retry_outstanding:
+        for snapshot in src_endpoint.list_snapshots():
+            for lock in snapshot.locks:
+                if lock not in args.dest:
+                    args.dest.append(lock)
 
     dest_endpoints = []
     for dest in args.dest:
@@ -308,7 +341,8 @@ until it finally maked it over to its destination.
         if dest.startswith("shell://"):
             dest_type = "shell"
             dest_cmd = dest[8:]
-            dest_endpoint = endpoint.ShellEndpoint(cmd=dest_cmd, **endpoint_kwargs)
+            dest_endpoint = endpoint.ShellEndpoint(cmd=dest_cmd,
+                                                   **endpoint_kwargs)
         elif dest.startswith("ssh://"):
             dest_type = "ssh"
             parsed_dest = urllib.parse.urlparse(dest)
@@ -330,14 +364,12 @@ until it finally maked it over to its destination.
                 port=port,
                 path=dest_path,
                 ssh_opts=args.ssh_opt,
-            btrfs_debug=args.btrfs_debug,
                 **endpoint_kwargs)
         else:
             dest_type = "local"
             dest_path = dest
             dest_endpoint = endpoint.LocalEndpoint(
                 path=dest_path,
-                btrfs_debug=args.btrfs_debug,
                 fs_checks=not args.skip_fs_checks,
                 **endpoint_kwargs)
         dest_endpoints.append(dest_endpoint)
@@ -345,34 +377,45 @@ until it finally maked it over to its destination.
         logging.debug("Destination: {}".format(dest))
         logging.debug("Destination endpoint: {}".format(dest_endpoint))
 
-    logging.info(util.log_heading("Preparing endpoints ..."))
-    src_endpoint.prepare()
-    for dest_endpoint in dest_endpoints:
+        logging.info("Preparing endpoint {} ...".format(dest_endpoint))
         dest_endpoint.prepare()
 
-    if not args.no_snapshot:
+    if args.no_snapshot:
+        logging.info("Taking no snapshot.")
+    else:
         # First we need to create a new snapshot on the source disk
         logging.info(util.log_heading("Snapshotting ..."))
         src_endpoint.snapshot()
 
     for dest_endpoint in dest_endpoints:
-        sync_snapshots(src_endpoint, dest_endpoint,
-                       keep_num_backups=args.num_backups,
-                       no_progress=args.no_progress)
+        try:
+            sync_snapshots(src_endpoint, dest_endpoint,
+                           keep_num_backups=args.num_backups,
+                           no_progress=args.no_progress)
+        except util.AbortError as e:
+            logging.error("Aborting snapshot transfer to {} due to "
+                          " exception.".format(dest_endpoint))
+            logging.debug("Exception was: {}".format(e))
+    if not dest_endpoints:
+        logging.info("No destination configured, don't sending anything.")
 
     logging.info(util.log_heading("Cleaning up ..."))
     # cleanup snapshots > num_snapshots in snapdir
     if args.num_snapshots > 0:
-        src_endpoint.delete_old_snapshots(args.num_snapshots,
-                                          ignore_locks=args.ignore_locks,
-                                          convert_rw=args.convert_rw,
-                                          sync=args.sync)
+        try:
+            src_endpoint.delete_old_snapshots(args.num_snapshots,
+                                              ignore_locks=args.ignore_locks)
+        except util.AbortError as e:
+            logging.debug("Got AbortError while deleting source snapshots at "
+                          "{}".format(src_endpoint))
     # cleanup backups > num_backups in backup target
     if args.num_backups > 0:
         for dest_endpoint in dest_endpoints:
-            dest_endpoint.delete_old_snapshots(args.num_backups,
-                                               convert_rw=args.convert_rw,
-                                               sync=args.sync)
+            try:
+                dest_endpoint.delete_old_snapshots(args.num_backups)
+            except util.AbortError as e:
+                logging.debug("Got AbortError while deleting backups at "
+                              "{}".format(dest_endpoint))
 
     logging.info(util.log_heading("Finished at {}".format(time.ctime())))
 
