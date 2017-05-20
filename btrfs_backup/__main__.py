@@ -218,15 +218,9 @@ files is allowed as well.
                        help="Only keep latest n backups at destination. "
                             "This option is not supported for 'shell://' "
                             "storage.")
-    group.add_argument("--ignore-locks", action="store_true",
-                       help="Force the retention policy - causes snapshots "
-                            "to be removed even when they are locked due to "
-                            "transmission failures. You should only use this "
-                            "flag if you can assure that no partially "
-                            "transferred snapshot is left at any destination.")
 
-    group = parser.add_argument_group("Snapshot settings")
-    group.add_argument("--no-snapshot", action="store_true",
+    group = parser.add_argument_group("Snapshot creation settings")
+    group.add_argument("-S", "--no-snapshot", action="store_true",
                        help="Don't take a new snapshot, just transfer "
                             "existing ones.")
     group.add_argument("-f", "--snapshot-folder",
@@ -236,11 +230,15 @@ files is allowed as well.
     group.add_argument("-p", "--snapshot-prefix",
                        help="Prefix for snapshot names. Default is ''.")
 
-    group = parser.add_argument_group("Miscellaneous options")
+    group = parser.add_argument_group("Transfer related options")
+    group.add_argument("-T", "--no-transfer", action="store_true",
+                       help="Don't transfer any snapshot.")
     group.add_argument("-I", "--no-incremental", action="store_true",
                        help="Don't ever try to send snapshots incrementally. "
                             "This might be useful when piping to a file for "
                             "storage.")
+
+    group = parser.add_argument_group("Miscellaneous options")
     group.add_argument("-s", "--sync", action="store_true",
                        help="Run 'btrfs subvolume sync' after deleting "
                             "subvolumes.")
@@ -249,6 +247,15 @@ files is allowed as well.
                             "before deleting them. This allows regular users "
                             "to delete subvolumes when mount option "
                             "user_subvol_rm_allowed is enabled.")
+    group.add_argument("--remove-locks", action="store_true",
+                       help="Remove locks for all given destinations from all "
+                            "snapshots present at source. You should only use "
+                            "this flag if you can assure that no partially "
+                            "transferred snapshot is left at any given "
+                            "destination. It might be useful together with "
+                            "'--no-snapshot --no-transfer --locked-dests' "
+                            "in order to clean up any existing lock without "
+                            "doing anything else.")
     group.add_argument("--skip-fs-checks", action="store_true",
                        help="Don't check whether source / destination is a "
                             "btrfs subvolume / filesystem. Normally, you "
@@ -273,9 +280,9 @@ files is allowed as well.
                        help="Shortcut for '--num-snapshots 1'.")
 
     group = parser.add_argument_group("Source and destination")
-    group.add_argument("--retry-outstanding", action="store_true",
-                       help="Retry all outstanding transfers without manually "
-                            "having to specify the destinations.")
+    group.add_argument("--locked-dests", action="store_true",
+                       help="Automatically add all destinations for which "
+                            "locks exist at any source snapshot.")
     group.add_argument("source", help="Subvolume to backup.")
     group.add_argument("dest", nargs="*", default=[],
                        help="N|Destination to send backups to.\n"
@@ -315,14 +322,11 @@ files is allowed as well.
         snapdir = args.snapshot_folder
     else:
         snapdir = 'snapshot'
-    logging.debug("Snapshot folder: {}".format(snapdir))
 
     if args.snapshot_prefix:
         snapprefix = args.snapshot_prefix
     else:
-        snapprefix = ''
-    logging.debug("Snapshot prefix: {}".format(
-        args.snapshot_prefix if args.snapshot_prefix else None))
+        snapprefix = ""
 
     logging.debug("Enable btrfs debugging: {}".format(args.btrfs_debug))
     logging.debug("Don't display progress: {}".format(args.no_progress))
@@ -331,14 +335,19 @@ files is allowed as well.
     logging.debug("Number of backups to keep: "
                   "{}".format(args.num_backups if args.num_backups > 0
                               else "Any"))
-    logging.debug("Ignore locks when deleting snapshots: "
-                  "{}".format(args.ignore_locks))
+    logging.debug("Snapshot folder: {}".format(snapdir))
+    logging.debug("Snapshot prefix: "
+                  "{}".format(snapprefix if snapprefix else None))
+    logging.debug("Don't transfer snapshots: {}".format(args.no_transfer))
     logging.debug("Don't send incrementally: {}".format(args.no_incremental))
     logging.debug("Run 'btrfs subvolume sync' afterwards: {}".format(args.sync))
     logging.debug("Convert subvolumes to read-write before deletion: "
                   "{}".format(args.convert_rw))
+    logging.debug("Remove locks for given destinations: "
+                  "{}".format(args.remove_locks))
     logging.debug("Skip filesystem checks: {}".format(args.skip_fs_checks))
     logging.debug("Extra SSH config options: {}".format(args.ssh_opt))
+    logging.debug("Auto add locked destinations: {}".format(args.locked_dests))
 
     # kwargs that are common between all endpoints
     endpoint_kwargs = {"snapprefix": snapprefix,
@@ -358,57 +367,68 @@ files is allowed as well.
     logging.info("Preparing endpoint {} ...".format(src_endpoint))
     src_endpoint.prepare()
 
-    # add endpoint creation strings for outstanding transfers, if desired
-    if args.retry_outstanding:
+    # add endpoint creation strings for locked destinations, if desired
+    if args.locked_dests:
         for snapshot in src_endpoint.list_snapshots():
             for lock in snapshot.locks:
                 if lock not in args.dest:
                     args.dest.append(lock)
 
-    dest_endpoints = []
-    for dest in args.dest:
-        # parse destination string
-        if dest.startswith("shell://"):
-            dest_type = "shell"
-            dest_cmd = dest[8:]
-            dest_endpoint = endpoint.ShellEndpoint(cmd=dest_cmd,
-                                                   **endpoint_kwargs)
-        elif dest.startswith("ssh://"):
-            dest_type = "ssh"
-            parsed_dest = urllib.parse.urlparse(dest)
-            if not parsed_dest.hostname:
-                logging.error("No hostname for SSH specified.")
-                raise util.AbortError()
-            try:
-                port = parsed_dest.port
-            except ValueError:
-                # invalid literal for int ...
-                port = None
-            dest_path = parsed_dest.path.strip() or "/"
-            if parsed_dest.query:
-                dest_path += "?" + parsed_dest.query
-            dest_path = os.path.normpath(dest_path)
-            dest_endpoint = endpoint.SSHEndpoint(
-                username=parsed_dest.username,
-                hostname=parsed_dest.hostname,
-                port=port,
-                path=dest_path,
-                ssh_opts=args.ssh_opt,
-                **endpoint_kwargs)
-        else:
-            dest_type = "local"
-            dest_path = dest
-            dest_endpoint = endpoint.LocalEndpoint(
-                path=dest_path,
-                fs_checks=not args.skip_fs_checks,
-                **endpoint_kwargs)
-        dest_endpoints.append(dest_endpoint)
-        logging.debug("Destination type: {}".format(dest_type))
-        logging.debug("Destination: {}".format(dest))
-        logging.debug("Destination endpoint: {}".format(dest_endpoint))
+    if args.remove_locks:
+        logging.info(util.log_heading("Removing locks ..."))
+        for snapshot in src_endpoint.list_snapshots():
+            for dest in args.dest:
+                src_endpoint.set_lock(snapshot, dest, False)
 
-        logging.info("Preparing endpoint {} ...".format(dest_endpoint))
-        dest_endpoint.prepare()
+    dest_endpoints = []
+    # only create destination endpoints if they are needed
+    if args.no_transfer and args.num_backups <= 0:
+        logging.debug("Don't creating destination endpoints because they "
+                      "won't be needed.")
+    else:
+        for dest in args.dest:
+            # parse destination string
+            if dest.startswith("shell://"):
+                dest_type = "shell"
+                dest_cmd = dest[8:]
+                dest_endpoint = endpoint.ShellEndpoint(cmd=dest_cmd,
+                                                       **endpoint_kwargs)
+            elif dest.startswith("ssh://"):
+                dest_type = "ssh"
+                parsed_dest = urllib.parse.urlparse(dest)
+                if not parsed_dest.hostname:
+                    logging.error("No hostname for SSH specified.")
+                    raise util.AbortError()
+                try:
+                    port = parsed_dest.port
+                except ValueError:
+                    # invalid literal for int ...
+                    port = None
+                dest_path = parsed_dest.path.strip() or "/"
+                if parsed_dest.query:
+                    dest_path += "?" + parsed_dest.query
+                dest_path = os.path.normpath(dest_path)
+                dest_endpoint = endpoint.SSHEndpoint(
+                    username=parsed_dest.username,
+                    hostname=parsed_dest.hostname,
+                    port=port,
+                    path=dest_path,
+                    ssh_opts=args.ssh_opt,
+                    **endpoint_kwargs)
+            else:
+                dest_type = "local"
+                dest_path = dest
+                dest_endpoint = endpoint.LocalEndpoint(
+                    path=dest_path,
+                    fs_checks=not args.skip_fs_checks,
+                    **endpoint_kwargs)
+            dest_endpoints.append(dest_endpoint)
+            logging.debug("Destination type: {}".format(dest_type))
+            logging.debug("Destination: {}".format(dest))
+            logging.debug("Destination endpoint: {}".format(dest_endpoint))
+
+            logging.info("Preparing endpoint {} ...".format(dest_endpoint))
+            dest_endpoint.prepare()
 
     if args.no_snapshot:
         logging.info("Taking no snapshot.")
@@ -417,25 +437,27 @@ files is allowed as well.
         logging.info(util.log_heading("Snapshotting ..."))
         src_endpoint.snapshot()
 
-    for dest_endpoint in dest_endpoints:
-        try:
-            sync_snapshots(src_endpoint, dest_endpoint,
-                           keep_num_backups=args.num_backups,
-                           no_incremental=args.no_incremental,
-                           no_progress=args.no_progress)
-        except util.AbortError as e:
-            logging.error("Aborting snapshot transfer to {} due to "
-                          " exception.".format(dest_endpoint))
-            logging.debug("Exception was: {}".format(e))
-    if not dest_endpoints:
-        logging.info("No destination configured, don't sending anything.")
+    if args.no_transfer:
+        logging.info("Don't transferring snapshots.")
+    else:
+        for dest_endpoint in dest_endpoints:
+            try:
+                sync_snapshots(src_endpoint, dest_endpoint,
+                               keep_num_backups=args.num_backups,
+                               no_incremental=args.no_incremental,
+                               no_progress=args.no_progress)
+            except util.AbortError as e:
+                logging.error("Aborting snapshot transfer to {} due to "
+                              " exception.".format(dest_endpoint))
+                logging.debug("Exception was: {}".format(e))
+        if not dest_endpoints:
+            logging.info("No destination configured, don't sending anything.")
 
     logging.info(util.log_heading("Cleaning up ..."))
     # cleanup snapshots > num_snapshots in snapdir
     if args.num_snapshots > 0:
         try:
-            src_endpoint.delete_old_snapshots(args.num_snapshots,
-                                              ignore_locks=args.ignore_locks)
+            src_endpoint.delete_old_snapshots(args.num_snapshots)
         except util.AbortError as e:
             logging.debug("Got AbortError while deleting source snapshots at "
                           "{}".format(src_endpoint))

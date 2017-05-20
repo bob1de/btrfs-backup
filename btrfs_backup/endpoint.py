@@ -105,11 +105,11 @@ class Endpoint:
         self.__cached_snapshots.append(snapshot)
         self.__cached_snapshots.sort()
 
-    def delete_snapshots(self, snapshots, ignore_locks=False, **kwargs):
+    def delete_snapshots(self, snapshots, **kwargs):
         # only remove snapshots that have no lock remaining
         to_remove = []
         for snapshot in snapshots:
-            if not snapshot.locks or ignore_locks:
+            if not snapshot.locks:
                 to_remove.append(snapshot)
                 # remove existing locks, if any
                 for lock in set(snapshot.locks):
