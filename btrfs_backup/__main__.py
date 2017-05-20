@@ -181,14 +181,20 @@ btrfs-backup will notice it and prevent the snapshot from being deleted
 until it finally maked it over to its destination.
 """
     epilog = """\
-You may also pass one or more file names prefixed with '@' at the command
-line. In this case, arguments are read from that file, treating each
-line as an argument you would normally pass directly. Mixing of direct
-arguments and argument files is allowed as well.
+You may also pass one or more file names prefixed with '@' at the
+command line. Arguments are then read from these files, treating each
+line as an argument (or '--arg value'-style pair) you would normally
+pass directly. Note that you must not escape whitespaces (or anything
+else) within argument values. Lines starting with '#' are treated
+as comments and silently ignored. Indentation is allowed and has no
+effect. Argument files can be nested, meaning you may include a file
+from another one. When doing so, make sure to not create infinite loops
+by including files mutually. Mixing of direct arguments and argument
+files is allowed as well.
 """
-    parser = argparse.ArgumentParser(description=description, epilog=epilog,
-                                     formatter_class=util.ArgparseSmartFormatter,
-                                     add_help=False, fromfile_prefix_chars="@")
+    parser = util.MyArgumentParser(description=description, epilog=epilog,
+                                   add_help=False, fromfile_prefix_chars="@",
+                                   formatter_class=util.MyHelpFormatter)
 
     group = parser.add_argument_group("Display settings")
     group.add_argument("-h", "--help", action="help",
@@ -271,7 +277,7 @@ arguments and argument files is allowed as well.
                        help="Retry all outstanding transfers without manually "
                             "having to specify the destinations.")
     group.add_argument("source", help="Subvolume to backup.")
-    group.add_argument("dest", nargs="*",
+    group.add_argument("dest", nargs="*", default=[],
                        help="N|Destination to send backups to.\n"
                             "The following schemes are possible:\n"
                             " - /path/to/backups\n"
@@ -284,7 +290,12 @@ arguments and argument files is allowed as well.
                             "for instance, for well-organized local "
                             "snapshotting without backing up.")
 
-    args = parser.parse_args()
+    try:
+        args = parser.parse_args()
+    except RecursionError as e:
+        print("Recursion error while parsing arguments.\n"
+              "Maybe you produced a loop in argument files?", file=sys.stderr)
+        sys.exit(1)
 
     # applying shortcuts
     if args.quiet:

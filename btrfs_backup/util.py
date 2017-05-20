@@ -10,7 +10,25 @@ DATE_FORMAT = "%Y%m%d-%H%M%S"
 MOUNTS_FILE = "/proc/mounts"
 
 
-class ArgparseSmartFormatter(argparse.HelpFormatter):
+class MyArgumentParser(argparse.ArgumentParser):
+    """Custom parser that allows for comments in argument files."""
+
+    def convert_arg_line_to_args(self, arg_line):
+        stripped = arg_line.strip()
+        # ignore blank lines and comments
+        if not stripped or stripped.startswith("#"):
+            return []
+        if stripped.startswith(tuple(self.prefix_chars)):
+            # split at first whitespace/tab, empty strings are removed
+            # e.g. "-a    b c" -> ["-a", "b c"]
+            return stripped.split(None, 1)
+        # must be a positional argument which shouldn't be splitted
+        return [stripped]
+
+class MyHelpFormatter(argparse.HelpFormatter):
+    """Custom formatter that keeps explicit line breaks in help texts
+       if the text starts with 'N|'. That special prefix is removed anyway."""
+
     def _split_lines(self, text, width):
         if text.startswith("N|"):
             _lines = text[2:].splitlines()
