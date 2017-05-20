@@ -262,7 +262,7 @@ files is allowed as well.
                             "shouldn't need to use this flag. If it is "
                             "necessary in a working setup, please consider "
                             "filing a bug.")
-    group.add_argument("--ssh-opt", action="append",
+    group.add_argument("--ssh-opt", action="append", default=[],
                        help="N|Pass extra ssh_config options to ssh(1).\n"
                             "Example: '--ssh-opt Cipher=aes256-ctr --ssh-opt "
                             "IdentityFile=/root/id_rsa'\n"
@@ -375,10 +375,12 @@ files is allowed as well.
                     args.dest.append(lock)
 
     if args.remove_locks:
-        logging.info(util.log_heading("Removing locks ..."))
+        logging.info("Removing locks ...")
         for snapshot in src_endpoint.list_snapshots():
             for dest in args.dest:
-                src_endpoint.set_lock(snapshot, dest, False)
+                if dest in snapshot.locks:
+                    logging.info("  {} ({})".format(snapshot, dest))
+                    src_endpoint.set_lock(snapshot, dest, False)
 
     dest_endpoints = []
     # only create destination endpoints if they are needed
