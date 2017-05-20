@@ -131,6 +131,16 @@ You can specify ``--num-snapshots <num>`` to only keep the latest
 ``--num-backups <num>`` does the same for the backup location.
 
 
+Help text
+---------
+This is the output of ``btrfs-backup --help``. Taking a look at it,
+you should get a good insight in what it can and can't do (yet).
+
+::
+
+    Cooming at the release.
+
+
 Backing up regularly
 --------------------
 With anacron on Debian, you could simply add a file
