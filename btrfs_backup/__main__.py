@@ -87,7 +87,8 @@ def send_snapshot(snapshot, dest_endpoint, parent=None, clones=None,
             raise util.SnapshotTransferError()
 
 
-def sync_snapshots(src_endpoint, dest_endpoint, keep_num_backups=0, **kwargs):
+def sync_snapshots(src_endpoint, dest_endpoint, keep_num_backups=0,
+                   no_incremental=False, **kwargs):
     logging.info(util.log_heading("Transferring to {} "
                                   "...".format(dest_endpoint)))
 
@@ -130,24 +131,31 @@ def sync_snapshots(src_endpoint, dest_endpoint, keep_num_backups=0, **kwargs):
         logging.info("  {}".format(snapshot))
 
     while to_transfer:
-        # pick the snapshots common among source and dest,
-        # exclude those that had a failed transfer before
-        present_snapshots = [s for s in src_snapshots
-                             if s in dest_snapshots and
-                                dest_id not in s.locks]
-        # choose snapshot with smallest distance to its parent
-        def key(s):
-            p = s.find_parent(present_snapshots)
-            if p is None:
-                return 999999999
-            d = src_snapshots.index(s) - src_snapshots.index(p)
-            return -d if d < 0 else d
-        best_snapshot = min(to_transfer, key=key)
-        parent = best_snapshot.find_parent(present_snapshots)
+        if no_incremental:
+            # just choose the last one
+            best_snapshot = to_transfer[-1]
+            parent = None
+            clones = []
+        else:
+            # pick the snapshots common among source and dest,
+            # exclude those that had a failed transfer before
+            present_snapshots = [s for s in src_snapshots
+                                 if s in dest_snapshots and
+                                    dest_id not in s.locks]
+            # choose snapshot with smallest distance to its parent
+            def key(s):
+                p = s.find_parent(present_snapshots)
+                if p is None:
+                    return 999999999
+                d = src_snapshots.index(s) - src_snapshots.index(p)
+                return -d if d < 0 else d
+            best_snapshot = min(to_transfer, key=key)
+            parent = best_snapshot.find_parent(present_snapshots)
+            clones = present_snapshots
         src_endpoint.set_lock(best_snapshot, dest_id, True)
         try:
             send_snapshot(best_snapshot, dest_endpoint, parent=parent,
-                          clones=present_snapshots, **kwargs)
+                          clones=clones, **kwargs)
         except util.SnapshotTransferError:
             logging.info("Keeping {} locked to prevent it from getting "
                          "removed.".format(best_snapshot))
@@ -157,7 +165,8 @@ def sync_snapshots(src_endpoint, dest_endpoint, keep_num_backups=0, **kwargs):
             dest_snapshots = dest_endpoint.list_snapshots()
         to_transfer.remove(best_snapshot)
 
-    logging.info(util.log_heading("Snapshot transfers complete!"))
+    logging.info(util.log_heading("Transfers to {} "
+                                  "complete!".format(dest_endpoint)))
 
 
 def run():
@@ -206,7 +215,9 @@ arguments and argument files is allowed as well.
     group.add_argument("--ignore-locks", action="store_true",
                        help="Force the retention policy - causes snapshots "
                             "to be removed even when they are locked due to "
-                            "transmission failures.")
+                            "transmission failures. You should only use this "
+                            "flag if you can assure that no partially "
+                            "transferred snapshot is left at any destination.")
 
     group = parser.add_argument_group("Snapshot settings")
     group.add_argument("--no-snapshot", action="store_true",
@@ -220,9 +231,10 @@ arguments and argument files is allowed as well.
                        help="Prefix for snapshot names. Default is ''.")
 
     group = parser.add_argument_group("Miscellaneous options")
-    group.add_argument("-C", "--skip-fs-checks", action="store_true",
-                       help="Don't check whether source / destination is a "
-                            "btrfs subvolume / filesystem.")
+    group.add_argument("-I", "--no-incremental", action="store_true",
+                       help="Don't ever try to send snapshots incrementally. "
+                            "This might be useful when piping to a file for "
+                            "storage.")
     group.add_argument("-s", "--sync", action="store_true",
                        help="Run 'btrfs subvolume sync' after deleting "
                             "subvolumes.")
@@ -231,6 +243,12 @@ arguments and argument files is allowed as well.
                             "before deleting them. This allows regular users "
                             "to delete subvolumes when mount option "
                             "user_subvol_rm_allowed is enabled.")
+    group.add_argument("--skip-fs-checks", action="store_true",
+                       help="Don't check whether source / destination is a "
+                            "btrfs subvolume / filesystem. Normally, you "
+                            "shouldn't need to use this flag. If it is "
+                            "necessary in a working setup, please consider "
+                            "filing a bug.")
     group.add_argument("--ssh-opt", action="append",
                        help="N|Pass extra ssh_config options to ssh(1).\n"
                             "Example: '--ssh-opt Cipher=aes256-ctr --ssh-opt "
@@ -297,10 +315,6 @@ arguments and argument files is allowed as well.
 
     logging.debug("Enable btrfs debugging: {}".format(args.btrfs_debug))
     logging.debug("Don't display progress: {}".format(args.no_progress))
-    logging.debug("Skip filesystem checks: {}".format(args.skip_fs_checks))
-    logging.debug("Convert subvolumes to read-write before deletion: "
-                  "{}".format(args.convert_rw))
-    logging.debug("Run 'btrfs subvolume sync' afterwards: {}".format(args.sync))
     logging.debug("Don't take a new snapshot: {}".format(args.no_snapshot))
     logging.debug("Number of snapshots to keep: {}".format(args.num_snapshots))
     logging.debug("Number of backups to keep: "
@@ -308,6 +322,11 @@ arguments and argument files is allowed as well.
                               else "Any"))
     logging.debug("Ignore locks when deleting snapshots: "
                   "{}".format(args.ignore_locks))
+    logging.debug("Don't send incrementally: {}".format(args.no_incremental))
+    logging.debug("Run 'btrfs subvolume sync' afterwards: {}".format(args.sync))
+    logging.debug("Convert subvolumes to read-write before deletion: "
+                  "{}".format(args.convert_rw))
+    logging.debug("Skip filesystem checks: {}".format(args.skip_fs_checks))
     logging.debug("Extra SSH config options: {}".format(args.ssh_opt))
 
     # kwargs that are common between all endpoints
@@ -391,6 +410,7 @@ arguments and argument files is allowed as well.
         try:
             sync_snapshots(src_endpoint, dest_endpoint,
                            keep_num_backups=args.num_backups,
+                           no_incremental=args.no_incremental,
                            no_progress=args.no_progress)
         except util.AbortError as e:
             logging.error("Aborting snapshot transfer to {} due to "

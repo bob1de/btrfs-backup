@@ -22,6 +22,7 @@ class ArgparseSmartFormatter(argparse.HelpFormatter):
             lines.extend(argparse.HelpFormatter._split_lines(self, line, width))
         return lines
 
+
 def read_locks(s):
     """Reads locks from lock file content given as string.
        Returns ``{'snapname': ['lock', ...], ...}``.
@@ -36,10 +37,15 @@ def read_locks(s):
         for snapname, locks in content.items():
             assert isinstance(snapname, str)
             assert isinstance(locks, list)
+            if not locks:
+                # ignore empty lock lists
+                continue
             lock_dict[snapname] = []
             for lock in locks:
                 assert isinstance(lock, str)
-                lock_dict[snapname].append(lock)
+                if lock not in lock_dict[snapname]:
+                    # don't add multiple identical locks
+                    lock_dict[snapname].append(lock)
     except (AssertionError, json.JSONDecodeError) as e:
         logging.error("Lock file couldn't be parsed: {}".format(e))
         raise ValueError("invalid lock file format")

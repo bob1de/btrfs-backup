@@ -335,10 +335,6 @@ class ShellEndpoint(Endpoint):
         return subprocess.Popen(self.cmd, stdin=stdin, stdout=stdout,
                                 shell=True)
 
-    def add_snapshot(self, *args, **kwargs):
-        """Adding not supported. This is just a stub."""
-        pass
-
 
 class SSHEndpoint(Endpoint):
     def __init__(self, hostname, port=None, username=None, ssh_opts=None,
