@@ -228,6 +228,55 @@ will remove all locks for the destination ``ssh://nas/backups`` from
 possible as well.
 
 
+Configuration files
+-------------------
+By default, btrfs-backup doesn't read any configuration file. However,
+you can create one or more and specify them at the command line:
+
+::
+
+    $ btrfs-backup @path/to/backup_home.conf
+
+Any argument prefixed by a ``@`` is treated as file name of a
+configuration file.
+
+The format of these files is simple. On every line, there may be one flag,
+option or argument you would normally specify at the command line. Valid
+configuration files might look like the following.
+
+``backup_home.conf``:
+
+::
+
+    # This is a comment and thus ignored, as well as blank lines.
+
+    # Include another configuration file here.
+    @global.conf
+
+            # Indentation has no effect.
+            -p home
+
+    # This is the source.
+    /home
+
+    # Back up to both local and remote storage.
+    /mnt/backups/home
+    ssh://server/mnt/btrfs_storage/backups/home
+
+``global.conf``:
+
+::
+
+    # This file gets included by the other one.
+    --quiet
+
+    --num-snapshots 1
+    --num-backups 3
+
+A more detailled explanation about the format can be found in the help
+text.
+
+
 Backing up regularly
 --------------------
 With anacron on Debian, you could simply add a file
