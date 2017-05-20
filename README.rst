@@ -4,7 +4,9 @@ This project supports incremental backups for *btrfs* using *snapshots*
 and *send/receive* between filesystems. Think of it as a basic version
 of Time Machine.
 
-Backups can be stored either locally or remotely (e.g. via SSH).
+Backups can be stored locally and/or remotely (e.g. via SSH). Multi-target
+setups are supported as well as dealing with transmission failures
+(e.g. due to network outage).
 
 Its main goals are to be **reliable** and **functional** while
 maintaining **user-friendliness**. It should be easy to get started in
@@ -35,12 +37,19 @@ Features
 -  Initial creation of full backups
 -  Incremental backups on subsequent runs
 -  Different backup storage engines:
--  Local storage
--  Remote storage via SSH
--  Custom storage: Alternatively, the output of ``btrfs send`` may be
-   piped to a custom shell command.
+
+   -  Local storage
+   -  Remote storage via SSH
+   -  Custom storage: Alternatively, the output of ``btrfs send`` may be
+      piped to a custom shell command.
+
+-  Multi-target support with tracking of which snapshots are missing at
+   each location.
+-  Retransmission on errors (e.g. due to network outage).
 -  Simple and configurable retention policy for local and remote
    snapshots
+-  Optionally, create snapshots without transferring them anywhere
+   and vice versa.
 -  Creation of backups without root privileges, if some special
    conditions are met
 -  Detailled logging output with configurable log level
