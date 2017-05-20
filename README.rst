@@ -279,14 +279,26 @@ text.
 
 Backing up regularly
 --------------------
+Note that there is no locking. If you back up too often (i.e. more quickly than
+it takes the first call to finish, which can take several minutes,
+hours or even days on a filesystem with lots of files), you might end
+up with a new backup starting while an old one is still in progress.
+
+You can workaround the lack of locking using the ``flock(1)`` command,
+as suggested at https://github.com/efficiosoft/btrfs-backup/issues/4.
+
 With anacron on Debian, you could simply add a file
 ``/etc/cron.daily/local-backup``:
 
 .. code:: sh
 
     #!/bin/sh
-    ionice -c 3 /path/to/btrfs-backup --quiet --num-snapshots 1 --num-backups 3 \
-                /home /backup/home
+    flock -n /tmp/btrfs-backup-home.lock \
+        ionice -c 3 btrfs-backup --quiet --num-snapshots 1 --num-backups 3 \
+                    /home /backup/home
+
+You may omit the ``-n`` flag if you want to wait rather than fail in
+case a backup is already running.
 
 More or less frequent backups could be made using other ``cron.*``
 scripts.
@@ -311,29 +323,6 @@ root filesystem:
 You might instead have some luck taking the restored snapshot and
 turning it into a read-write snapshot, and then re-pivoting your mounted
 subvolume to the read-write snapshot.
-
-
-Locking
--------
-There is no locking. If you back up too often (i.e. more quickly than
-it takes the first call to finish, which can take several minutes,
-hours or even days on a filesystem with lots of files), you might end
-up with a new backup starting while
-an old one is in progress.
-
-You can workaround the lack of locking using the ``flock(1)`` command,
-as suggested at https://github.com/efficiosoft/btrfs-backup/issues/4. For
-example, in ``/etc/cron.hourly/local-backup``:
-
-.. code:: sh
-
-    #!/bin/sh
-    flock -n /tmp/btrfs-backup.lock \
-        ionice -c 3 /path/to/btrfs-backup --quiet --num-snapshots 1 --num-backups 3 \
-                    /home /backup/home
-
-You may omit the ``-n`` flag if you want to wait rather than fail in
-case a backup is already running.
 
 
 Alternative workflow
