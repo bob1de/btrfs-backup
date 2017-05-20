@@ -37,3 +37,7 @@ nosetests.xml
 .mr.developer.cfg
 .project
 .pydevproject
+
+# stdeb
+deb_dist
+btrfs_backup-*.tar.gz

@@ -279,10 +279,11 @@ text.
 
 Backing up regularly
 --------------------
-Note that there is no locking. If you back up too often (i.e. more quickly than
-it takes the first call to finish, which can take several minutes,
-hours or even days on a filesystem with lots of files), you might end
-up with a new backup starting while an old one is still in progress.
+Note that there is no locking included with btrfs-backup. If you back
+up too often (i.e. more quickly than it takes the first call to finish,
+which can take several minutes, hours or even days on a filesystem with
+lots of files), you might end up with a new backup starting while an
+old one is still in progress.
 
 You can workaround the lack of locking using the ``flock(1)`` command,
 as suggested at https://github.com/efficiosoft/btrfs-backup/issues/4.
