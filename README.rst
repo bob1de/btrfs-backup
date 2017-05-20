@@ -124,7 +124,7 @@ of subvolumes.**
 For the backup to be sensible, source and destination shouldn't be the
 same filesystem. Otherwise you could just snapshot and save the hassle.
 
-You can backup multiple subvolumes to multiple subfolders or subvolumes on
+You can backup multiple subvolumes to multiple subfolders or subvolumes at
 the destination. For example, you might want to backup both ``/`` and
 ``/home``. The main caveat is you'll want to put the backups in separate
 folders on the destination drive to avoid confusion.
@@ -136,7 +136,7 @@ folders on the destination drive to avoid confusion.
 
 If you really want to store backups of different subvolumes at the same
 location, you have to specify a prefix using the ``-p/--snapshot-prefix``
-option. Without that, ``btrfs-backup`` can't distinguish between your
+option. Without that, btrfs-backup can't distinguish between your
 different backup chains and will mix them up. Using the example from
 above, it could look like the following:
 
@@ -201,7 +201,7 @@ at the destination and deletes it, together with the corresponding lock.
 Afterwards, the way is free for a new transfer. You may also use
 ``--no-snapshot`` to only do the transfers without creating new snapshots.
 
-There is a special flag called ``locked-dests`` available. If supplied,
+There is a special flag called ``--locked-dests`` available. If supplied,
 it automatically adds all destinations which locks exist for as if they
 were specified at the command line. You might do something like:
 
