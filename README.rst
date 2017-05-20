@@ -55,17 +55,16 @@ Features
 -  Detailled logging output with configurable log level
 
 
-Requirements
+Installation
 ------------
+Requirements
+~~~~~~~~~~~~
 -  Python 3.3 or later
 -  Appropriate btrfs-progs; typically you'll want **at least** 3.12 with
    Linux 3.12/3.13
 -  (optional) OpenSSH's ``ssh`` command for remote backup storage
 -  (optional) ``pv`` command for displaying progress during backups
 
-
-Installation
-------------
 Install via PIP
 ~~~~~~~~~~~~~~~
 The easiest way to get up and running is via PIP. If ``pip3`` is missing
