@@ -96,7 +96,16 @@ Alternatively, clone this git repository
 
 Sample usage
 ------------
-(as root)
+Not every feature of btrfs-backup is explained in this README, since
+there is a detailled and descriptive help included with the command.
+
+However, there are some sections about the general concepts and different
+sample usages to get started as quick as possible.
+
+For reference, a copy of the output of ``btrfs-backup --help`` is
+attached below.
+
+As root:
 
 ::
 
@@ -105,16 +114,18 @@ Sample usage
 This will create a read-only snapshot of ``/home`` in
 ``/home/snapshot/YYMMDD-HHMMSS``, and then send it to
 ``/backup/YYMMDD-HHMMSS``. On future runs, it will take a new read-only
-snapshot and send the difference between the previous snapshot (tracked
-with the symbolic link ``.latest``) and the new one.
+snapshot and send the difference between the previous snapshot and the
+new one.
 
-**Note: Both source and destination filesystems need to be btrfs
-volumes.**
+**Note: Both source and destination need to be on btrfs filesystems.
+Additionally, the source has to be either the root or any other subvolume,
+but not just an ordinary directory because snapshots can only be created
+of subvolumes.**
 
-For the backup to be sensible, they shouldn't be the same filesystem.
-Otherwise you could just snapshot and save the hassle.
+For the backup to be sensible, source and destination shouldn't be the
+same filesystem. Otherwise you could just snapshot and save the hassle.
 
-You can backup multiple volumes to multiple subfolders or subvolumes on
+You can backup multiple subvolumes to multiple subfolders or subvolumes on
 the destination. For example, you might want to backup both ``/`` and
 ``/home``. The main caveat is you'll want to put the backups in separate
 folders on the destination drive to avoid confusion.
@@ -125,7 +136,7 @@ folders on the destination drive to avoid confusion.
     $ btrfs-backup /home /backup/home
 
 If you really want to store backups of different subvolumes at the same
-location, you have to specify a prefix using the ``--snapshot-prefix``
+location, you have to specify a prefix using the ``-p/--snapshot-prefix``
 option. Without that, ``btrfs-backup`` can't distinguish between your
 different backup chains and will mix them up. Using the example from
 above, it could look like the following:
@@ -135,9 +146,9 @@ above, it could look like the following:
     $ btrfs-backup --snapshot-prefix root / /backup
     $ btrfs-backup --snapshot-prefix home /home /backup
 
-You can specify ``--num-snapshots <num>`` to only keep the latest
-``<num>`` number of snapshots on the source filesystem.
-``--num-backups <num>`` does the same for the backup location.
+You can specify ``-N/--num-snapshots <num>`` to only keep the latest
+``<num>`` number of snapshots on the source filesystem. ``-n/--num-backups
+<num>`` does the same thing for the backup location.
 
 
 Help text
@@ -148,6 +159,58 @@ you should get a good insight in what it can and can't do (yet).
 ::
 
     Cooming at the release.
+
+
+What are locks?
+---------------
+btrfs-backup uses so called "locks" to keep track of failed snapshot
+transfers. There is a file called ``.outstanding_transfers`` created in
+the snapshot folder. This file is in JSON format and thus human-readable,
+if necessary.
+
+Locking works as follows:
+
+#. When a snapshot transfer is started, an entry is created in that file,
+   telling that a snapshot transfer of a specific snapshot to a specific
+   destination has begun. We call this entry a lock.
+#. When the transfer
+
+   #. finishes without errors, the lock is removed.
+   #. aborts (e.g. due to network outage or a full disk), the lock
+      is kept.
+
+Now, there are multiple options for dealing with those failed transfers.
+
+When you run btrfs-backup the next time, it finds the corrupt snapshot
+at the destination and deletes it, together with the corresponding lock.
+Afterwards, the way is free for a new transfer. You may also use
+``--no-snapshot`` to only do the transfers without creating new snapshots.
+
+There is a special flag called ``locked-dests`` available. If supplied,
+it automatically adds all destinations which locks exist for as if they
+were specified at the command line. You might do something like:
+
+::
+
+    $ btrfs-backup --no-snapshot --locked-dests /home
+
+to retry all failed backup transfers of snapshots of ``/home``. This
+could be executed periodically because it just does nothing if there
+are no locks.
+
+As a last resort for removing locks for transfers you don't want to retry
+anymore, there is a flag called ``--remove-locks``. Use it with caution
+and only if you can assure that there are no corrupt snapshots at the
+destinations you apply the flag on.
+
+::
+
+    $ btrfs-backup --no-snapshot --no-transfer --remove-locks /home ssh://nas/backups
+
+will remove all locks for the destination ``ssh://nas/backups`` from
+``/home/snapshot/.outstanding_transfers``. Of course, using
+``--locked-dests`` instead of specifying the destination explicitly is
+possible as well.
 
 
 Backing up regularly
@@ -188,13 +251,14 @@ subvolume to the read-write snapshot.
 
 Locking
 -------
-There is no locking. If you back up too often (i.e. more quickly than it
-takes to make a snapshot, which can take several minutes on a filesystem
-with lots of files), you might end up with a new backup starting while
+There is no locking. If you back up too often (i.e. more quickly than
+it takes the first call to finish, which can take several minutes,
+hours or even days on a filesystem with lots of files), you might end
+up with a new backup starting while
 an old one is in progress.
 
 You can workaround the lack of locking using the ``flock(1)`` command,
-as suggested at https://github.com/lordsutch/btrfs-backup/issues/4. For
+as suggested at https://github.com/efficiosoft/btrfs-backup/issues/4. For
 example, in ``/etc/cron.hourly/local-backup``:
 
 .. code:: sh
@@ -204,8 +268,8 @@ example, in ``/etc/cron.hourly/local-backup``:
         ionice -c 3 /path/to/btrfs-backup --quiet --num-snapshots 1 --num-backups 3 \
                     /home /backup/home
 
-You may omit the ``-n`` parameter if you want to wait rather than fail
-in case a backup is already running.
+You may omit the ``-n`` flag if you want to wait rather than fail in
+case a backup is already running.
 
 
 Alternative workflow
@@ -237,6 +301,18 @@ snapshot can be done entirely with btrfs tools:
 
 The snapshots from btrfs-backup may be placed in ``/snapshots/`` by
 using the ``--snapshot-folder`` option.
+
+
+Issues and Contribution
+-----------------------
+As in every piece of software, there likely are bugs. When you find one,
+please open an issue on GitHub. If you do so, please include the output
+with debug log level (``-v debug``) and provide steps to reproduce
+the problem. Thank you!
+
+If you want to contribute, that's great! You can create issues (even
+for feature requests), send pull requests or contact me via email at
+r.schindler@efficiosoft.com.
 
 
 Copyright

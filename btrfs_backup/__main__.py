@@ -107,7 +107,12 @@ def sync_snapshots(src_endpoint, dest_endpoint, keep_num_backups=0,
                          "{}".format(dest_snapshot, dest_endpoint))
             to_remove.append(dest_snapshot)
     if to_remove:
-        dest_endpoint.delete_snapshots(to_remove, subvolume_sync=False)
+        dest_endpoint.delete_snapshots(to_remove)
+
+    # now that deletion worked, remove all locks for this destination
+    for snapshot in src_snapshots:
+        if dest_id in snapshot.locks:
+            src_endpoint.set_lock(snapshot, dest_id, False)
 
     logging.debug("Planning transmissions ...")
     to_consider = src_snapshots
