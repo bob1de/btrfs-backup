@@ -149,6 +149,22 @@ You can specify ``-N/--num-snapshots <num>`` to only keep the latest
 ``<num>`` number of snapshots on the source filesystem. ``-n/--num-backups
 <num>`` does the same thing for the backup location.
 
+Remote backups
+~~~~~~~~~~~~~~
+Backing up to a remote server via SSH is as easy as:
+
+::
+
+    $ btrfs-backup /home ssh://server/mnt/backups
+
+btrfs-backup doesn't need to be installed on the remote side for this
+to work. It is recommended to set up public key authentication to
+eliminate the need for entering passwords. A full description of how
+to customize the ``ssh`` call can be found in the help text.
+
+Pulling backups from a remote SSH side is not yet supported. Please push
+until it is.
+
 
 Help text
 ---------
