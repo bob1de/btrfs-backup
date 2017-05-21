@@ -106,16 +106,8 @@ class LocalEndpoint(Endpoint):
                           "{}".format(self.lock_path, e))
             raise util.AbortError()
 
-    def set_lock(self, snapshot, lock_id, lock_state):
+    def _write_locks(self, lock_dict):
         try:
-            if lock_state:
-                snapshot.locks.add(lock_id)
-            else:
-                snapshot.locks.discard(lock_id)
-            lock_dict = {}
-            for _snapshot in self.list_snapshots():
-                if _snapshot.locks:
-                    lock_dict[_snapshot.get_name()] = list(_snapshot.locks)
             logging.debug("Writing lock file: {}".format(self.lock_path))
             with open(self.lock_path, "w") as f:
                 f.write(util.write_locks(lock_dict))
@@ -123,8 +115,6 @@ class LocalEndpoint(Endpoint):
             logging.error("Error on writing lock file {}: "
                           "{}".format(self.lock_path, e))
             raise util.AbortError()
-        logging.debug("Lock state for {} and lock_id {} changed to "
-                      "{}".format(snapshot, lock_id, lock_state))
 
     def _delete_snapshots(self, snapshots, **kwargs):
         cmds = self._build_deletion_cmds(snapshots, **kwargs)

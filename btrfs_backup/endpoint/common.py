@@ -90,10 +90,25 @@ class Endpoint:
            ``util.read_locks`` returns it."""
         return {}
 
-    def set_lock(self, snapshot, lock_id, lock_state):
-        """Should add/remove the given lock from snapshot and write locks
-           out to permanent storage."""
+    def _write_locks(self, lock_dict):
+        """Should write the locks given as ``lock_dict`` like
+           ``util.read_locks`` returns it."""
         raise NotImplemented()
+
+    def set_lock(self, snapshot, lock_id, lock_state):
+        """Adds/removes the given lock from ``snapshot`` and calls
+           ``_write_locks`` with the updated locks."""
+        if lock_state:
+            snapshot.locks.add(lock_id)
+        else:
+            snapshot.locks.discard(lock_id)
+        lock_dict = {}
+        for _snapshot in self.list_snapshots():
+            if _snapshot.locks:
+                lock_dict[_snapshot.get_name()] = list(_snapshot.locks)
+        self._write_locks(lock_dict)
+        logging.debug("Lock state for {} and lock_id {} changed to "
+                      "{}".format(snapshot, lock_id, lock_state))
 
     def add_snapshot(self, snapshot, rewrite=True):
         if self.__cached_snapshots is None:
