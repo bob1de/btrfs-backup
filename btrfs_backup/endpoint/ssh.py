@@ -16,9 +16,11 @@ class SSHEndpoint(Endpoint):
         self.username = username
         self.ssh_opts = ssh_opts or []
         self.sshfs_opts = ["auto_unmount", "cache=no", "reconnect"]
-        if self.source is not None:
+        if self.source:
+            self.source = os.path.normpath(self.source)
             if not self.path.startswith("/"):
                 self.path = os.path.join(self.source, self.path)
+        self.path = os.path.normpath(self.path)
         self.sshfs = False
 
     def __repr__(self):

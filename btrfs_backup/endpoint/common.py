@@ -21,12 +21,12 @@ class Endpoint:
                  fs_checks=True, **kwargs):
         self.path = path
         self.snapprefix = snapprefix
+        self.convert_rw = convert_rw
+        self.subvolume_sync = subvolume_sync
         self.btrfs_debug = btrfs_debug
         self.btrfs_flags = []
         if self.btrfs_debug:
             self.btrfs_flags += ["-vv"]
-        self.convert_rw = convert_rw
-        self.subvolume_sync = subvolume_sync
         self.source = source
         self.fs_checks = fs_checks
         self.lock_file_name = ".outstanding_transfers"

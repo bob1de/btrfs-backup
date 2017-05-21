@@ -1,6 +1,5 @@
 import os
 import urllib.parse
-import logging
 
 from .local import LocalEndpoint
 from .ssh import SSHEndpoint
@@ -37,8 +36,7 @@ def choose_endpoint(spec, common_kwargs=None, source=False,
         c = SSHEndpoint
         parsed = urllib.parse.urlparse(spec)
         if not parsed.hostname:
-            logging.error("No hostname for SSH specified.")
-            raise ValueError()
+            raise ValueError("No hostname for SSh specified.")
         try:
             kwargs["port"] = parsed.port
         except ValueError:

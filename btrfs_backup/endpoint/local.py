@@ -8,12 +8,13 @@ from .common import Endpoint
 class LocalEndpoint(Endpoint):
     def __init__(self, **kwargs):
         super(LocalEndpoint, self).__init__(**kwargs)
-        if self.source is not None:
-            self.source = os.path.abspath(self.source)
+        if self.source:
+            self.source = os.path.normpath(os.path.abspath(self.source))
             if not self.path.startswith("/"):
                 self.path = os.path.join(self.source, self.path)
         else:
             self.path = os.path.abspath(self.path)
+        self.path = os.path.normpath(self.path)
 
     def get_id(self):
         """Return an id string to identify this endpoint over multiple runs."""

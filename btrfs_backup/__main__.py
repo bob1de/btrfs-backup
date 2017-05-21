@@ -365,11 +365,16 @@ files is allowed as well.
                        "fs_checks": not args.skip_fs_checks,
                        "ssh_opts": args.ssh_opt}
 
+    logging.debug("Source: {}".format(args.source))
     src_endpoint_kwargs = dict(endpoint_kwargs)
     src_endpoint_kwargs["path"] = snapdir
-    src_endpoint = endpoint.choose_endpoint(args.source, src_endpoint_kwargs,
-                                            source=True)
-    logging.debug("Source: {}".format(args.source))
+    try:
+        src_endpoint = endpoint.choose_endpoint(args.source,
+                                                src_endpoint_kwargs,
+                                                source=True)
+    except ValueError as e:
+        logging.error("Couldn't parse source specification: {}".format(e))
+        sys.exit(1)
     logging.debug("Source endpoint: {}".format(src_endpoint))
 
     logging.info("Preparing endpoint {} ...".format(src_endpoint))
@@ -397,9 +402,14 @@ files is allowed as well.
                       "won't be needed.")
     else:
         for dest in args.dest:
-            dest_endpoint = endpoint.choose_endpoint(dest, endpoint_kwargs)
-            dest_endpoints.append(dest_endpoint)
             logging.debug("Destination: {}".format(dest))
+            try:
+                dest_endpoint = endpoint.choose_endpoint(dest, endpoint_kwargs)
+            except ValueError as e:
+                logging.error("Couldn't parse destination specification: "
+                              "{}".format(e))
+                sys.exit(1)
+            dest_endpoints.append(dest_endpoint)
             logging.debug("Destination endpoint: {}".format(dest_endpoint))
 
             logging.info("Preparing endpoint {} ...".format(dest_endpoint))
