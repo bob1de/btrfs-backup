@@ -12,7 +12,7 @@ setup(
     author = "Robert Schindler",
     author_email = "r.schindler@efficiosoft.com",
     license = "MIT",
-    packages = ["btrfs_backup"],
+    packages = ["btrfs_backup", "btrfs_backup.endpoint"],
     zip_safe = False,
     entry_points = {
        "console_scripts": [

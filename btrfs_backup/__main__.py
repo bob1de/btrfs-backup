@@ -40,13 +40,13 @@ from . import endpoint
 def send_snapshot(snapshot, dest_endpoint, parent=None, clones=None,
                   no_progress=False):
     # Now we need to send the snapshot (incrementally, if possible)
-    logging.info(util.log_heading("Transferring {}".format(snapshot)))
+    logging.info("Sending {} ...".format(snapshot))
     if parent:
-        logging.info("Using parent: {}".format(parent))
+        logging.info("  Using parent: {}".format(parent))
     else:
-        logging.info("No parent snapshot available, sending full backup.")
+        logging.info("  No parent snapshot available, sending full backup.")
     if clones:
-        logging.info("Using clones: {}".format(clones))
+        logging.info("  Using clones: {}".format(clones))
 
     pv = False
     if not no_progress:
@@ -445,8 +445,9 @@ files is allowed as well.
         src_endpoint.snapshot()
 
     if args.no_transfer:
-        logging.info("Don't transferring snapshots.")
+        logging.info(util.log_heading("Don't transferring snapshots."))
     else:
+        logging.info(util.log_heading("Transferring ..."))
         for dest_endpoint in dest_endpoints:
             try:
                 sync_snapshots(src_endpoint, dest_endpoint,
