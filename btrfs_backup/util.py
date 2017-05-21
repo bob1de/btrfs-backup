@@ -24,9 +24,9 @@ class MyArgumentParser(argparse.ArgumentParser):
                 new_arg_strings.append(arg_string)
             # replace arguments referencing files with the file content
             else:
+                arg_strings = []
                 try:
                     with open(arg_string[1:]) as args_file:
-                        arg_strings = []
                         for arg_line in args_file.read().splitlines():
                             for arg in self.convert_arg_line_to_args(arg_line):
                                 # make nested includes relative to their parent
@@ -37,11 +37,11 @@ class MyArgumentParser(argparse.ArgumentParser):
                                     path = os.path.normpath(path)
                                     arg = arg[0] + path
                                 arg_strings.append(arg)
-                    arg_strings = self._read_args_from_files(arg_strings)
-                    new_arg_strings.extend(arg_strings)
                 except OSError:
                     err = sys.exc_info()[1]
                     self.error(str(err))
+                arg_strings = self._read_args_from_files(arg_strings)
+                new_arg_strings.extend(arg_strings)
 
         # return the modified argument list
         return new_arg_strings
