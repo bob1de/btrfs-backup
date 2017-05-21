@@ -44,7 +44,7 @@ def send_snapshot(snapshot, dest_endpoint, parent=None, clones=None,
     if parent:
         logging.info("  Using parent: {}".format(parent))
     else:
-        logging.info("  No parent snapshot available, sending full backup.")
+        logging.info("  No parent snapshot available, sending in full mode.")
     if clones:
         logging.info("  Using clones: {}".format(clones))
 
@@ -215,7 +215,12 @@ files is allowed as well.
     group.add_argument("-P", "--no-progress", action="store_true",
                        help="Don't display progress and stats during backup.")
 
-    group = parser.add_argument_group("Retention settings")
+    group = parser.add_argument_group("Retention settings",
+                                      description="By default, snapshots are "
+                                                  "kept forever at both source "
+                                                  "and destination. With these "
+                                                  "settings you may specify an "
+                                                  "alternate retention policy.")
     group.add_argument("-N", "--num-snapshots", type=int, default=0,
                        help="Only keep latest n snapshots on source "
                             "filesystem.")
