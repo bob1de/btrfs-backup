@@ -1,5 +1,6 @@
 import os
 import subprocess
+import tempfile
 import logging
 
 from .. import util
@@ -14,10 +15,11 @@ class SSHEndpoint(Endpoint):
         self.port = port
         self.username = username
         self.ssh_opts = ssh_opts or []
+        self.sshfs_opts = ["auto_unmount", "cache=no", "reconnect"]
         if self.source is not None:
             if not self.path.startswith("/"):
                 self.path = os.path.join(self.source, self.path)
-        self.lock_path = os.path.join(self.path, self.lock_name)
+        self.sshfs = False
 
     def __repr__(self):
         return "(SSH) {}{}".format(
@@ -44,6 +46,32 @@ class SSHEndpoint(Endpoint):
             raise util.AbortError()
         else:
             logging.debug("  -> ssh is available")
+
+        # sshfs is useful for listing directories and reading/writing locks
+        tempdir = tempfile.mkdtemp()
+        logging.debug("Created tempdir: {}".format(tempdir))
+        mountpoint = os.path.join(tempdir, "mnt")
+        os.makedirs(mountpoint)
+        logging.debug("Created directory: {}".format(mountpoint))
+        logging.debug("Mounting sshfs ...")
+
+        cmd = ["sshfs"]
+        if self.port:
+            cmd += ["-p", str(self.port)]
+        for opt in self.ssh_opts + self.sshfs_opts:
+            cmd += ["-o", opt]
+        cmd += ["{}:/".format(self._build_connect_string()), mountpoint]
+        try:
+            util.exec_subprocess(cmd, method="call", stdout=subprocess.DEVNULL)
+        except FileNotFoundError as e:
+            logging.debug("  -> got exception: {}".format(e))
+            if self.source:
+                # we need that for the locks
+                logging.info("sshfs command is not available")
+                raise util.AbortError()
+        else:
+            self.sshfs = mountpoint
+            logging.debug("  -> sshfs is available")
 
     def _collapse_cmds(self, cmds, abort_on_failure=True):
         """Concatenates all given commands, ';' is inserted as separator."""
@@ -73,14 +101,22 @@ class SSHEndpoint(Endpoint):
     def _listdir(self, location):
         """Operates remotely via 'ls -1a'. '.' and '..' are excluded from
            the result."""
-        cmd = ["ls", "-1a", location]
-        output = self._exec_cmd(cmd, universal_newlines=True)
-        items = []
-        for item in output.splitlines():
-            # remove . and ..
-            if item not in (".", ".."):
-                items.append(item)
+
+        if self.sshfs:
+            items = os.listdir(self._path2sshfs(location))
+        else:
+            cmd = ["ls", "-1a", location]
+            output = self._exec_cmd(cmd, universal_newlines=True)
+            items = []
+            for item in output.splitlines():
+                # remove . and ..
+                if item not in (".", ".."):
+                    items.append(item)
+
         return items
+
+    def _get_lock_file_path(self):
+        return self._path2sshfs(super(SSHEndpoint, self)._get_lock_file_path())
 
 
     ########## Custom methods
@@ -92,3 +128,11 @@ class SSHEndpoint(Endpoint):
         if with_port and self.port:
             s = "{}:{}".format(s, self.port)
         return s
+
+    def _path2sshfs(self, path):
+        """Joins the given ``path`` with the sshfs mountpoint."""
+        if not self.sshfs:
+            raise ValueError("sshfs not mounted")
+        if path.startswith("/"):
+            path = path[1:]
+        return os.path.join(self.sshfs, path)

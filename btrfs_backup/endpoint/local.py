@@ -14,7 +14,6 @@ class LocalEndpoint(Endpoint):
                 self.path = os.path.join(self.source, self.path)
         else:
             self.path = os.path.abspath(self.path)
-        self.lock_path = os.path.join(self.path, self.lock_name)
 
     def get_id(self):
         """Return an id string to identify this endpoint over multiple runs."""
@@ -46,27 +45,3 @@ class LocalEndpoint(Endpoint):
             logging.error("{} does not seem to be on a btrfs "
                           "filesystem".format(self.path))
             raise util.AbortError()
-
-    def _read_locks(self):
-        try:
-            if not os.path.isfile(self.lock_path):
-                return {}
-            with open(self.lock_path, "r") as f:
-                return util.read_locks(f.read())
-        except (OSError, ValueError) as e:
-            logging.error("Error on reading lock file {}: "
-                          "{}".format(self.lock_path, e))
-            raise util.AbortError()
-
-    def _write_locks(self, lock_dict):
-        try:
-            logging.debug("Writing lock file: {}".format(self.lock_path))
-            with open(self.lock_path, "w") as f:
-                f.write(util.write_locks(lock_dict))
-        except OSError as e:
-            logging.error("Error on writing lock file {}: "
-                          "{}".format(self.lock_path, e))
-            raise util.AbortError()
-
-    def _listdir(self, location):
-        return os.listdir(location)

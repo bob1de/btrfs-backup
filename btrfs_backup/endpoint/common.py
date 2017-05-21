@@ -29,7 +29,7 @@ class Endpoint:
         self.subvolume_sync = subvolume_sync
         self.source = source
         self.fs_checks = fs_checks
-        self.lock_name = ".outstanding_transfers"
+        self.lock_file_name = ".outstanding_transfers"
         self.__cached_snapshots = None
 
     @require_source
@@ -293,16 +293,39 @@ class Endpoint:
 
     def _listdir(self, location):
         """Should return all items present at the given ``location``."""
-        logging.warning("Listing / deleting snapshots is not supported "
-                        "for {}".format(self))
-        return []
+        return os.listdir(location)
 
+    @require_source
+    def _get_lock_file_path(self):
+        """Is used by the default ``_read/write_locks`` methods and should
+           return the file in which the locks are stored."""
+        return os.path.join(self.path, self.lock_file_name)
+
+    @require_source
     def _read_locks(self):
         """Should read the locks and return a dict like
            ``util.read_locks`` returns it."""
-        raise NotImplemented()
+        path = self._get_lock_file_path()
+        try:
+            if not os.path.isfile(path):
+                return {}
+            with open(path, "r") as f:
+                return util.read_locks(f.read())
+        except (OSError, ValueError) as e:
+            logging.error("Error on reading lock file {}: "
+                          "{}".format(path, e))
+            raise util.AbortError()
 
+    @require_source
     def _write_locks(self, lock_dict):
         """Should write the locks given as ``lock_dict`` like
            ``util.read_locks`` returns it."""
-        raise NotImplemented()
+        path = self._get_lock_file_path()
+        try:
+            logging.debug("Writing lock file: {}".format(path))
+            with open(path, "w") as f:
+                f.write(util.write_locks(lock_dict))
+        except OSError as e:
+            logging.error("Error on writing lock file {}: "
+                          "{}".format(path, e))
+            raise util.AbortError()
