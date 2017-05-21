@@ -1,5 +1,4 @@
 import os
-import subprocess
 import logging
 
 from .. import util
@@ -50,51 +49,6 @@ class LocalEndpoint(Endpoint):
                           "filesystem".format(self.path))
             raise util.AbortError()
 
-    def _snapshot(self, readonly=True, sync=True):
-        snapshot = util.Snapshot(self.path, self.snapprefix, self)
-        snapshot_path = snapshot.get_path()
-        logging.info("{} -> {}".format(self.source, snapshot_path))
-        cmd = ["btrfs", "subvolume", "snapshot"]
-        if readonly:
-            cmd += ["-r"]
-        cmd += [self.source, snapshot_path]
-        util.exec_subprocess(cmd)
-        # sync disks
-        if sync:
-            logging.info("Syncing disks ...")
-            cmd = ["sync"]
-            try:
-                util.exec_subprocess(cmd)
-            except util.AbortError:
-                pass
-        return snapshot
-
-    def send(self, snapshot, parent=None, clones=None):
-        """Calls 'btrfs send' for the given snapshot and returns its
-           Popen object."""
-        cmd = ["btrfs", "send"] + self.btrfs_flags
-        # from WARNING level onwards, pass --quiet
-        loglevel = logging.getLogger().getEffectiveLevel()
-        if loglevel >= logging.WARNING:
-            cmd += ["--quiet"]
-        if parent:
-            cmd += ["-p", parent.get_path()]
-        if clones:
-            for clone in clones:
-                cmd += ["-c", clone.get_path()]
-        cmd += [snapshot.get_path()]
-        return util.exec_subprocess(cmd, method="Popen", stdout=subprocess.PIPE)
-
-    def receive(self, stdin):
-        """Calls 'btrfs receive', setting the given pipe as its stdin.
-           The receiving process's Popen object is returned."""
-        cmd = ["btrfs", "receive"] + self.btrfs_flags + [self.path]
-        # from WARNING level onwards, hide stdout
-        loglevel = logging.getLogger().getEffectiveLevel()
-        stdout = subprocess.DEVNULL if loglevel >= logging.WARNING else None
-        return util.exec_subprocess(cmd, method="Popen", stdin=stdin,
-                                    stdout=stdout)
-
     def _read_locks(self):
         try:
             if not os.path.isfile(self.lock_path):
@@ -115,11 +69,6 @@ class LocalEndpoint(Endpoint):
             logging.error("Error on writing lock file {}: "
                           "{}".format(self.lock_path, e))
             raise util.AbortError()
-
-    def _delete_snapshots(self, snapshots, **kwargs):
-        cmds = self._build_deletion_cmds(snapshots, **kwargs)
-        for cmd in cmds:
-            util.exec_subprocess(cmd)
 
     def _listdir(self, location):
         return os.listdir(location)

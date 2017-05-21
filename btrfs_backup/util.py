@@ -75,7 +75,7 @@ def exec_subprocess(cmd, method="check_output", **kwargs):
         return m(cmd, **kwargs)
     except subprocess.CalledProcessError:
         logging.error("Error on command: {}".format(cmd))
-        raise util.AbortError()
+        raise AbortError()
 
 
 def log_heading(caption):

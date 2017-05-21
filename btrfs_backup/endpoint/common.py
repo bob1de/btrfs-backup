@@ -1,4 +1,5 @@
 import os
+import subprocess
 import logging
 
 from .. import util
@@ -28,34 +29,56 @@ class Endpoint:
         self.source = source
         self.__cached_snapshots = None
 
-    def __repr__(self):
-        return self.path
+    @require_source
+    def snapshot(self, readonly=True, sync=True):
+        """Takes a snapshot and returns the created object."""
 
-    def get_id(self):
-        """Return an id string to identify this endpoint over multiple runs."""
-        return "unknown://{}".format(self.path)
+        snapshot = util.Snapshot(self.path, self.snapprefix, self)
+        snapshot_path = snapshot.get_path()
+        logging.info("{} -> {}".format(self.source, snapshot_path))
 
-    def prepare(self):
-        pass
+        cmds = []
+        cmds.append(self._build_snapshot_cmd(self.source, snapshot_path,
+                                             readonly=readonly))
+
+        # sync disks
+        if sync:
+            cmds.append(self._build_sync_cmd())
+
+        for cmd in self._collapse_cmds(cmds):
+            self._exec_cmd(cmd)
+
+        self.add_snapshot(snapshot)
+        return snapshot
 
     @require_source
-    def snapshot(self, **kwargs):
-        return self._snapshot(**kwargs)
-
-    def _snapshot(self, readonly=True, sync=True):
-        raise NotImplemented()
-
     def send(self, snapshot, parent=None, clones=None):
-        raise NotImplemented()
+        """Calls 'btrfs send' for the given snapshot and returns its
+           Popen object."""
 
-    def receive(self, *args, **kwargs):
-        raise NotImplemented()
+        cmd = self._build_send_cmd(snapshot, parent=parent, clones=clones)
+        return self._exec_cmd(cmd, method="Popen", stdout=subprocess.PIPE)
+
+    def receive(self, stdin):
+        """Calls 'btrfs receive', setting the given pipe as its stdin.
+           The receiving process's Popen object is returned."""
+
+        cmd = self._build_receive_cmd(self.path)
+        # from WARNING level onwards, hide stdout
+        loglevel = logging.getLogger().getEffectiveLevel()
+        stdout = subprocess.DEVNULL if loglevel >= logging.WARNING else None
+        return self._exec_cmd(cmd, method="Popen", stdin=stdin, stdout=stdout)
 
     def list_snapshots(self, flush_cache=False):
+        """Returns a list with all snapshots found at ``self.path``.
+           If ``flush_cache`` is not set, cached results will be used
+           if available."""
+
         if self.__cached_snapshots is not None and not flush_cache:
             logging.debug("Returning {} cached snapshots for "
                           "{}.".format(len(self.__cached_snapshots), self))
             return list(self.__cached_snapshots)
+
         logging.debug("Building snapshot cache of {} ...".format(self))
         snapshots = []
         listdir = self._listdir(self.path)
@@ -73,28 +96,22 @@ class Endpoint:
                     snapshots.append(snapshot)
 
         # apply locks
-        lock_dict = self._read_locks()
-        for snapshot in snapshots:
-            snapshot.locks.update(lock_dict.get(snapshot.get_name(), []))
+        if self.source:
+            lock_dict = self._read_locks()
+            for snapshot in snapshots:
+                snapshot.locks.update(lock_dict.get(snapshot.get_name(), []))
 
         # sort by date, then time;
         snapshots.sort()
+
         # populate cache
         self.__cached_snapshots = snapshots
         logging.debug("Populated snapshot cache of {} with {} "
                       "items.".format(self, len(snapshots)))
+
         return list(snapshots)
 
-    def _read_locks(self):
-        """Should read the locks and return a dict like
-           ``util.read_locks`` returns it."""
-        return {}
-
-    def _write_locks(self, lock_dict):
-        """Should write the locks given as ``lock_dict`` like
-           ``util.read_locks`` returns it."""
-        raise NotImplemented()
-
+    @require_source
     def set_lock(self, snapshot, lock_id, lock_state):
         """Adds/removes the given lock from ``snapshot`` and calls
            ``_write_locks`` with the updated locks."""
@@ -111,15 +128,26 @@ class Endpoint:
                       "{}".format(snapshot, lock_id, lock_state))
 
     def add_snapshot(self, snapshot, rewrite=True):
+        """Adds a snapshot to the cache. If ``rewrite`` is set, a new
+           ``util.Snapshot`` object is created with the original ``prefix``
+           and ``time_obj``. However, ``path`` and ``endpoint`` are set to
+           belong to this endpoint. The original snapshot object is
+           dropped in that case."""
+
         if self.__cached_snapshots is None:
             return None
+
         if rewrite:
             snapshot = util.Snapshot(self.path, snapshot.prefix, self,
                                      time_obj=snapshot.time_obj)
+
         self.__cached_snapshots.append(snapshot)
         self.__cached_snapshots.sort()
 
     def delete_snapshots(self, snapshots, **kwargs):
+        """Deletes the given snapshots, passing all keyword arguments to
+           ``_build_deletion_cmds``."""
+
         # only remove snapshots that have no lock remaining
         to_remove = []
         for snapshot in snapshots:
@@ -128,6 +156,7 @@ class Endpoint:
                 # remove existing locks, if any
                 for lock in set(snapshot.locks):
                     self.set_lock(snapshot, lock, False)
+
         logging.info("Removing {} snapshot(s) from "
                      "{}:".format(len(to_remove), self))
         for snapshot in snapshots:
@@ -135,8 +164,14 @@ class Endpoint:
                 logging.info("  {}".format(snapshot))
             else:
                 logging.info("  {} - is locked, keeping it".format(snapshot))
+
         if to_remove:
-            self._delete_snapshots(to_remove, **kwargs)
+            # finally delete them
+            cmds = self._build_deletion_cmds(to_remove, **kwargs)
+            cmds = self._collapse_cmds(cmds)
+            for cmd in cmds:
+                self._exec_cmd(cmd)
+
             if self.__cached_snapshots is not None:
                 for snapshot in to_remove:
                     try:
@@ -155,29 +190,110 @@ class Endpoint:
             to_remove = snapshots[:-keep_num]
             self.delete_snapshots(to_remove, **kwargs)
 
+
+    # The following methods may be implemented by endpoints unless the
+    # default behaviour is wanted.
+
+    def __repr__(self):
+        return self.path
+
+    def prepare(self):
+        """Is called after endpoint creation. Various endpoint-related
+           checks may be implemented here."""
+        pass
+
+    def get_id(self):
+        """Return an id string to identify this endpoint over multiple runs."""
+        return "unknown://{}".format(self.path)
+
+    def _build_snapshot_cmd(self, source, dest, readonly=True):
+        """Should return a command which, when executed, creates a
+           snapshot of ``source`` at ``dest``. If ``readonly`` is set,
+           the snapshot should be read only."""
+        cmd = ["btrfs", "subvolume", "snapshot"]
+        if readonly:
+            cmd += ["-r"]
+        cmd += [source, dest]
+        return cmd
+
+    def _build_sync_cmd(self):
+        """Should return the 'sync' command."""
+        return ["sync"]
+
+    def _build_send_cmd(self, snapshot, parent=None, clones=None):
+        """Should return a command which, when executed, writes the send
+           stream of given ``snapshot`` to stdout. ``parent`` and ``clones``
+           may be used as well."""
+        cmd = ["btrfs", "send"] + self.btrfs_flags
+        # from WARNING level onwards, pass --quiet
+        loglevel = logging.getLogger().getEffectiveLevel()
+        if loglevel >= logging.WARNING:
+            cmd += ["--quiet"]
+        if parent:
+            cmd += ["-p", parent.get_path()]
+        if clones:
+            for clone in clones:
+                cmd += ["-c", clone.get_path()]
+        cmd += [snapshot.get_path()]
+        return cmd
+
+    def _build_receive_cmd(self, dest):
+        """Should return a command to receive a snapshot to ``dest``.
+           The stream is piped into stdin when the command is running."""
+        return ["btrfs", "receive"] + self.btrfs_flags + [dest]
+
     def _build_deletion_cmds(self, snapshots, convert_rw=None,
                              subvolume_sync=None):
+        """Should return a list of commands that, when executed in order,
+           delete the given ``snapshots``. ``convert_rw`` and
+           ``subvolume_sync`` should be regarded as well."""
+
         if convert_rw is None:
             convert_rw = self.convert_rw
         if subvolume_sync is None:
             subvolume_sync = self.subvolume_sync
+
         cmds = []
+
         if convert_rw:
             for snapshot in snapshots:
                 cmds.append(["btrfs", "property", "set", "-ts",
                              snapshot.get_path(), "ro", "false"])
+
         cmd = ["btrfs", "subvolume", "delete"]
         cmd.extend([snapshot.get_path() for snapshot in snapshots])
         cmds.append(cmd)
+
         if subvolume_sync:
             cmds.append(["btrfs", "subvolume", "sync", self.path])
+
         return cmds
 
+    def _collapse_cmds(self, cmds):
+        """This might be re-implemented to group commands together whereever
+           possible. The default implementation simply returns the given command
+           list unchanged."""
+        return cmds
+
+    def _exec_cmd(self, cmd, **kwargs):
+        """Finally, the command should be executed via
+           ``util.exec_subprocess``, which should get all given keyword
+           arguments. This could be re-implemented to execute via SSH,
+           for instance."""
+        return util.exec_subprocess(cmd, **kwargs)
+
     def _listdir(self, location):
-        logging.warning("Listing / deleting snapshots is not (yet) supported "
+        """Should return all items present at the given ``location``."""
+        logging.warning("Listing / deleting snapshots is not supported "
                         "for {}".format(self))
         return []
 
-    def _delete_snapshots(self, snapshots, **kwargs):
-        logging.warning("Listing / deleting snapshots is not (yet) supported "
-                        "for {}".format(self))
+    def _read_locks(self):
+        """Should read the locks and return a dict like
+           ``util.read_locks`` returns it."""
+        raise NotImplemented()
+
+    def _write_locks(self, lock_dict):
+        """Should write the locks given as ``lock_dict`` like
+           ``util.read_locks`` returns it."""
+        raise NotImplemented()

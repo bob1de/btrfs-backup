@@ -89,8 +89,7 @@ def send_snapshot(snapshot, dest_endpoint, parent=None, clones=None,
 
 def sync_snapshots(src_endpoint, dest_endpoint, keep_num_backups=0,
                    no_incremental=False, **kwargs):
-    logging.info(util.log_heading("Transferring to {} "
-                                  "...".format(dest_endpoint)))
+    logging.info(util.log_heading("  To {} ...".format(dest_endpoint)))
 
     src_snapshots = src_endpoint.list_snapshots()
     dest_snapshots = dest_endpoint.list_snapshots()

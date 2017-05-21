@@ -1,4 +1,3 @@
-import os
 import subprocess
 import logging
 
@@ -20,45 +19,12 @@ class SSHEndpoint(Endpoint):
             self._build_connect_string(with_port=True), self.path)
 
     def get_id(self):
-        """Return an id string to identify this endpoint over multiple runs."""
         s = self.hostname
         if self.username:
             s = "{}@{}".format(self.username, s)
         if self.port:
             s = "{}:{}".format(s, self.port)
         return "ssh://{}{}".format(s, self.path)
-
-    def _build_connect_string(self, with_port=False):
-        s = self.hostname
-        if self.username:
-            s = "{}@{}".format(self.username, s)
-        if with_port and self.port:
-            s = "{}:{}".format(s, self.port)
-        return s
-
-    def _build_ssh_cmd(self, cmds=None, multi=False):
-        def append_cmd(append_to, to_append):
-            if isinstance(to_append, (list, tuple)):
-                append_to.extend(to_append)
-            elif isinstance(to_append, str):
-                append_to.append(to_append)
-            else:
-                return False
-            return True
-
-        cmd = ["ssh"]
-        if self.port:
-            cmd += ["-p", str(self.port)]
-        for opt in self.ssh_opts:
-            cmd += ["-o", opt]
-        cmd += [self._build_connect_string()]
-        if multi:
-            for i, _cmd in enumerate(cmds):
-                if append_cmd(cmd, _cmd) and i+1 < len(cmds):
-                    cmd.append(";")
-        else:
-            append_cmd(cmd, cmds)
-        return cmd
 
     def prepare(self):
         # check whether ssh is available
@@ -74,19 +40,36 @@ class SSHEndpoint(Endpoint):
         else:
             logging.debug("  -> ssh is available")
 
-    def receive(self, stdin):
-        cmd = ["btrfs", "receive"] + self.btrfs_flags + [self.path]
-        cmd = self._build_ssh_cmd(cmd)
-        # from WARNING level onwards, hide stdout
-        loglevel = logging.getLogger().getEffectiveLevel()
-        stdout = subprocess.DEVNULL if loglevel >= logging.WARNING else None
-        return util.exec_subprocess(cmd, method="Popen", stdin=stdin,
-                                    stdout=stdout)
+    def _collapse_cmds(self, cmds):
+        """Concatenates all given commands, ';' is inserted as separator."""
+
+        collapsed = []
+        for i, cmd in enumerate(cmds):
+            if isinstance(cmd, (list, tuple)):
+                collapsed.extend(cmd)
+                if len(cmds) > i + 1:
+                    collapsed.append(";")
+
+        return [collapsed]
+
+    def _exec_cmd(self, orig_cmd, **kwargs):
+        """Executes the command at the remote host."""
+
+        cmd = ["ssh"]
+        if self.port:
+            cmd += ["-p", str(self.port)]
+        for opt in self.ssh_opts:
+            cmd += ["-o", opt]
+        cmd += [self._build_connect_string()]
+        cmd.extend(orig_cmd)
+
+        return util.exec_subprocess(cmd, **kwargs)
 
     def _listdir(self, location):
+        """Operates remotely via 'ls -1a'. '.' and '..' are excluded from
+           the result."""
         cmd = ["ls", "-1a", location]
-        cmd = self._build_ssh_cmd(cmd)
-        output = util.exec_subprocess(cmd, universal_newlines=True)
+        output = self._exec_cmd(cmd, universal_newlines=True)
         items = []
         for item in output.splitlines():
             # remove . and ..
@@ -94,7 +77,13 @@ class SSHEndpoint(Endpoint):
                 items.append(item)
         return items
 
-    def _delete_snapshots(self, snapshots, **kwargs):
-        cmds = self._build_deletion_cmds(snapshots, **kwargs)
-        cmd = self._build_ssh_cmd(cmds, multi=True)
-        util.exec_subprocess(cmd, universal_newlines=True)
+
+    ########## Custom methods
+
+    def _build_connect_string(self, with_port=False):
+        s = self.hostname
+        if self.username:
+            s = "{}@{}".format(self.username, s)
+        if with_port and self.port:
+            s = "{}:{}".format(s, self.port)
+        return s
