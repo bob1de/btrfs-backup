@@ -1,4 +1,5 @@
 import functools
+import sys
 import os
 import time
 import json
@@ -12,6 +13,38 @@ MOUNTS_FILE = "/proc/mounts"
 
 class MyArgumentParser(argparse.ArgumentParser):
     """Custom parser that allows for comments in argument files."""
+
+    def _read_args_from_files(self, arg_strings):
+        """Overloaded to make nested imports relative to their parents."""
+        # expand arguments referencing files
+        new_arg_strings = []
+        for arg_string in arg_strings:
+            # for regular arguments, just add them back into the list
+            if not arg_string or arg_string[0] not in self.fromfile_prefix_chars:
+                new_arg_strings.append(arg_string)
+            # replace arguments referencing files with the file content
+            else:
+                try:
+                    with open(arg_string[1:]) as args_file:
+                        arg_strings = []
+                        for arg_line in args_file.read().splitlines():
+                            for arg in self.convert_arg_line_to_args(arg_line):
+                                # make nested includes relative to their parent
+                                if arg.startswith(self.fromfile_prefix_chars):
+                                    dirname = os.path.dirname(arg_string[1:])
+                                    path = os.path.join(dirname, arg[1:])
+                                    # eliminate ../foo/../foo constructs
+                                    path = os.path.normpath(path)
+                                    arg = arg[0] + path
+                                arg_strings.append(arg)
+                    arg_strings = self._read_args_from_files(arg_strings)
+                    new_arg_strings.extend(arg_strings)
+                except OSError:
+                    err = sys.exc_info()[1]
+                    self.error(str(err))
+
+        # return the modified argument list
+        return new_arg_strings
 
     def convert_arg_line_to_args(self, arg_line):
         stripped = arg_line.strip()
