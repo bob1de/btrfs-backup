@@ -31,7 +31,6 @@ import time
 import subprocess
 import logging
 import argparse
-import urllib.parse
 
 from . import util
 from . import endpoint
@@ -362,15 +361,15 @@ files is allowed as well.
     endpoint_kwargs = {"snapprefix": snapprefix,
                        "convert_rw": args.convert_rw,
                        "subvolume_sync": args.sync,
-                       "btrfs_debug": args.btrfs_debug}
+                       "btrfs_debug": args.btrfs_debug,
+                       "fs_checks": not args.skip_fs_checks,
+                       "ssh_opts": args.ssh_opt}
 
-    src = os.path.abspath(args.source)
-    src_endpoint = endpoint.LocalEndpoint(
-        path=snapdir,
-        source=src,
-        fs_checks=not args.skip_fs_checks,
-        **endpoint_kwargs)
-    logging.debug("Source: {}".format(src))
+    src_endpoint_kwargs = dict(endpoint_kwargs)
+    src_endpoint_kwargs["path"] = snapdir
+    src_endpoint = endpoint.choose_endpoint(args.source, src_endpoint_kwargs,
+                                            source=True)
+    logging.debug("Source: {}".format(args.source))
     logging.debug("Source endpoint: {}".format(src_endpoint))
 
     logging.info("Preparing endpoint {} ...".format(src_endpoint))
@@ -398,43 +397,8 @@ files is allowed as well.
                       "won't be needed.")
     else:
         for dest in args.dest:
-            # parse destination string
-            if dest.startswith("shell://"):
-                dest_type = "shell"
-                dest_cmd = dest[8:]
-                dest_endpoint = endpoint.ShellEndpoint(cmd=dest_cmd,
-                                                       **endpoint_kwargs)
-            elif dest.startswith("ssh://"):
-                dest_type = "ssh"
-                parsed_dest = urllib.parse.urlparse(dest)
-                if not parsed_dest.hostname:
-                    logging.error("No hostname for SSH specified.")
-                    raise util.AbortError()
-                try:
-                    port = parsed_dest.port
-                except ValueError:
-                    # invalid literal for int ...
-                    port = None
-                dest_path = parsed_dest.path.strip() or "/"
-                if parsed_dest.query:
-                    dest_path += "?" + parsed_dest.query
-                dest_path = os.path.normpath(dest_path)
-                dest_endpoint = endpoint.SSHEndpoint(
-                    username=parsed_dest.username,
-                    hostname=parsed_dest.hostname,
-                    port=port,
-                    path=dest_path,
-                    ssh_opts=args.ssh_opt,
-                    **endpoint_kwargs)
-            else:
-                dest_type = "local"
-                dest_path = dest
-                dest_endpoint = endpoint.LocalEndpoint(
-                    path=dest_path,
-                    fs_checks=not args.skip_fs_checks,
-                    **endpoint_kwargs)
+            dest_endpoint = endpoint.choose_endpoint(dest, endpoint_kwargs)
             dest_endpoints.append(dest_endpoint)
-            logging.debug("Destination type: {}".format(dest_type))
             logging.debug("Destination: {}".format(dest))
             logging.debug("Destination endpoint: {}".format(dest_endpoint))
 

@@ -17,7 +17,8 @@ def require_source(method):
 
 class Endpoint:
     def __init__(self, path=None, snapprefix="", convert_rw=False,
-                 subvolume_sync=False, btrfs_debug=False, source=None):
+                 subvolume_sync=False, btrfs_debug=False, source=None,
+                 fs_checks=True, **kwargs):
         self.path = path
         self.snapprefix = snapprefix
         self.btrfs_debug = btrfs_debug
@@ -27,6 +28,8 @@ class Endpoint:
         self.convert_rw = convert_rw
         self.subvolume_sync = subvolume_sync
         self.source = source
+        self.fs_checks = fs_checks
+        self.lock_name = ".outstanding_transfers"
         self.__cached_snapshots = None
 
     @require_source
@@ -45,7 +48,7 @@ class Endpoint:
         if sync:
             cmds.append(self._build_sync_cmd())
 
-        for cmd in self._collapse_cmds(cmds):
+        for cmd in self._collapse_cmds(cmds, abort_on_failure=True):
             self._exec_cmd(cmd)
 
         self.add_snapshot(snapshot)
@@ -168,7 +171,7 @@ class Endpoint:
         if to_remove:
             # finally delete them
             cmds = self._build_deletion_cmds(to_remove, **kwargs)
-            cmds = self._collapse_cmds(cmds)
+            cmds = self._collapse_cmds(cmds, abort_on_failure=True)
             for cmd in cmds:
                 self._exec_cmd(cmd)
 
@@ -269,10 +272,16 @@ class Endpoint:
 
         return cmds
 
-    def _collapse_cmds(self, cmds):
+    def _collapse_cmds(self, cmds, abort_on_failure=True):
         """This might be re-implemented to group commands together whereever
            possible. The default implementation simply returns the given command
-           list unchanged."""
+           list unchanged.
+           If ``abort_on_failure`` is set, the implementation must assure that
+           every collapsed command in the returned list aborts immediately
+           after one of the original commands included in it fail. If it is
+           unset, the opposite behaviour is expected (subsequent commands have
+           be run even in case a previous one fails)."""
+
         return cmds
 
     def _exec_cmd(self, cmd, **kwargs):

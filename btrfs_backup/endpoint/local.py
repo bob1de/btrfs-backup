@@ -6,7 +6,7 @@ from .common import Endpoint
 
 
 class LocalEndpoint(Endpoint):
-    def __init__(self, fs_checks=True, **kwargs):
+    def __init__(self, **kwargs):
         super(LocalEndpoint, self).__init__(**kwargs)
         if self.source is not None:
             self.source = os.path.abspath(self.source)
@@ -14,9 +14,7 @@ class LocalEndpoint(Endpoint):
                 self.path = os.path.join(self.source, self.path)
         else:
             self.path = os.path.abspath(self.path)
-        self.fs_checks = fs_checks
-        lock_name = ".outstanding_transfers"
-        self.lock_path = os.path.join(self.path, lock_name)
+        self.lock_path = os.path.join(self.path, self.lock_name)
 
     def get_id(self):
         """Return an id string to identify this endpoint over multiple runs."""

@@ -1,3 +1,4 @@
+import os
 import subprocess
 import logging
 
@@ -13,6 +14,10 @@ class SSHEndpoint(Endpoint):
         self.port = port
         self.username = username
         self.ssh_opts = ssh_opts or []
+        if self.source is not None:
+            if not self.path.startswith("/"):
+                self.path = os.path.join(self.source, self.path)
+        self.lock_path = os.path.join(self.path, self.lock_name)
 
     def __repr__(self):
         return "(SSH) {}{}".format(
@@ -40,7 +45,7 @@ class SSHEndpoint(Endpoint):
         else:
             logging.debug("  -> ssh is available")
 
-    def _collapse_cmds(self, cmds):
+    def _collapse_cmds(self, cmds, abort_on_failure=True):
         """Concatenates all given commands, ';' is inserted as separator."""
 
         collapsed = []
@@ -48,7 +53,7 @@ class SSHEndpoint(Endpoint):
             if isinstance(cmd, (list, tuple)):
                 collapsed.extend(cmd)
                 if len(cmds) > i + 1:
-                    collapsed.append(";")
+                    collapsed.append("&&" if abort_on_failure else ";")
 
         return [collapsed]
 

@@ -4,6 +4,8 @@ from .common import Endpoint
 class ShellEndpoint(Endpoint):
     def __init__(self, cmd, **kwargs):
         super(ShellEndpoint, self).__init__(**kwargs)
+        if self.source:
+            raise ValueError("Shell can't be used as source.")
         self.cmd = cmd
 
     def __repr__(self):
