@@ -111,6 +111,8 @@ def sync_snapshots(src_endpoint, dest_endpoint, keep_num_backups=0,
     for snapshot in src_snapshots:
         if dest_id in snapshot.locks:
             src_endpoint.set_lock(snapshot, dest_id, False)
+        if dest_id in snapshot.parent_locks:
+            src_endpoint.set_lock(snapshot, dest_id, False, parent=True)
 
     logging.debug("Planning transmissions ...")
     to_consider = src_snapshots
@@ -404,6 +406,13 @@ files is allowed as well."""
                 if dest in snapshot.locks:
                     logging.info("  {} ({})".format(snapshot, dest))
                     src_endpoint.set_lock(snapshot, dest, False)
+
+        logging.info("Removing parent locks ...")
+        for snapshot in src_endpoint.list_snapshots():
+            for dest in args.dest:
+                if dest in snapshot.parent_locks:
+                    logging.info("  {} ({})".format(snapshot, dest))
+                    src_endpoint.set_lock(snapshot, dest, False, parent=True)
 
     dest_endpoints = []
     # only create destination endpoints if they are needed

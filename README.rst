@@ -204,58 +204,6 @@ you should get a good insight in what it can and can't do (yet).
     Cooming at the release.
 
 
-What are locks?
----------------
-btrfs-backup uses so called "locks" to keep track of failed snapshot
-transfers. There is a file called ``.outstanding_transfers`` created in
-the snapshot folder. This file is in JSON format and thus human-readable,
-if necessary.
-
-Locking works as follows:
-
-#. When a snapshot transfer is started, an entry is created in that file,
-   telling that a snapshot transfer of a specific snapshot to a specific
-   destination has begun. We call this entry a lock.
-#. When the transfer
-
-   #. finishes without errors, the lock is removed.
-   #. aborts (e.g. due to network outage or a full disk), the lock
-      is kept.
-
-Now, there are multiple options for dealing with those failed transfers.
-
-When you run btrfs-backup the next time, it finds the corrupt snapshot
-at the destination and deletes it, together with the corresponding lock.
-Afterwards, the way is free for a new transfer. You may also use
-``--no-snapshot`` to only do the transfers without creating new snapshots.
-
-There is a special flag called ``--locked-dests`` available. If supplied,
-it automatically adds all destinations which locks exist for as if they
-were specified at the command line. You might do something like:
-
-::
-
-    $ btrfs-backup --no-snapshot --locked-dests /home
-
-to retry all failed backup transfers of snapshots of ``/home``. This
-could be executed periodically because it just does nothing if there
-are no locks.
-
-As a last resort for removing locks for transfers you don't want to retry
-anymore, there is a flag called ``--remove-locks``. Use it with caution
-and only if you can assure that there are no corrupt snapshots at the
-destinations you apply the flag on.
-
-::
-
-    $ btrfs-backup --no-snapshot --no-transfer --remove-locks /home ssh://nas/backups
-
-will remove all locks for the destination ``ssh://nas/backups`` from
-``/home/snapshot/.outstanding_transfers``. Of course, using
-``--locked-dests`` instead of specifying the destination explicitly is
-possible as well.
-
-
 Configuration files
 -------------------
 By default, btrfs-backup doesn't read any configuration file. However,
@@ -303,6 +251,68 @@ configuration files might look like the following.
 
 A more detailled explanation about the format can be found in the help
 text.
+
+
+What are locks?
+---------------
+btrfs-backup uses so called "locks" to keep track of failed snapshot
+transfers. There is a file called ``.outstanding_transfers`` created in
+the snapshot folder. This file is in JSON format and thus human-readable,
+if necessary.
+
+Locking works as follows:
+
+#. When a snapshot transfer is started, an entry is created in that file,
+   telling that a snapshot transfer of a specific snapshot to a specific
+   destination has begun. We call this entry a lock.
+#. If the snapshot transfer used another snapshot as parent, that one
+   gets an entry as well, but no lock, just the note that it's a parent
+   for something that failed to transfer.
+#. When the transfer
+
+   #. finishes without errors, the locks for the snapshot (and its parent)
+      are removed.
+   #. aborts (e.g. due to network outage or a full disk), the locks
+      are kept.
+
+Now, there are multiple options for dealing with those failed transfers.
+
+When you run btrfs-backup the next time, it finds the corrupt snapshot
+at the destination and deletes it, together with the corresponding lock
+and parent notes. Afterwards, the way is free for a new transfer. You
+may also use ``--no-snapshot`` to only do the transfers without creating
+new snapshots.
+
+There is a special flag called ``--locked-dests`` available. If supplied,
+it automatically adds all destinations which locks exist for as if they
+were specified at the command line. You might do something like:
+
+::
+
+    $ btrfs-backup --no-snapshot --locked-dests /home
+
+to retry all failed backup transfers of snapshots of ``/home``. This
+could be executed periodically because it just does nothing if there
+are no locks.
+
+Snapshots for which locks or parent notes exist are excluded from the
+retention policy and won't be purged until the locks are removed either
+automatically (because the partially transferred snapshots could be
+deleted from the destination) or manually (see below).
+
+As a last resort for removing locks for transfers you don't want to retry
+anymore, there is a flag called ``--remove-locks``. Use it with caution
+and only if you can assure that there are no corrupt snapshots at the
+destinations you apply the flag on.
+
+::
+
+    $ btrfs-backup --no-snapshot --no-transfer --remove-locks /home ssh://nas/backups
+
+will remove all locks for the destination ``ssh://nas/backups`` from
+``/home/snapshot/.outstanding_transfers``. Of course, using
+``--locked-dests`` instead of specifying the destination explicitly is
+possible as well.
 
 
 Backing up regularly
