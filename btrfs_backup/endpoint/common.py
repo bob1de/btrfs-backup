@@ -32,6 +32,10 @@ class Endpoint:
         self.lock_file_name = ".outstanding_transfers"
         self.__cached_snapshots = None
 
+    def prepare(self):
+        logging.info("Preparing endpoint {} ...".format(self))
+        return self._prepare()
+
     @require_source
     def snapshot(self, readonly=True, sync=True):
         """Takes a snapshot and returns the created object."""
@@ -102,7 +106,9 @@ class Endpoint:
         if self.source:
             lock_dict = self._read_locks()
             for snapshot in snapshots:
-                snapshot.locks.update(lock_dict.get(snapshot.get_name(), []))
+                snap_entry = lock_dict.get(snapshot.get_name(), {})
+                for lock_type, locks in snap_entry.items():
+                    getattr(snapshot, lock_type).update(locks)
 
         # sort by date, then time;
         snapshots.sort()
@@ -115,20 +121,31 @@ class Endpoint:
         return list(snapshots)
 
     @require_source
-    def set_lock(self, snapshot, lock_id, lock_state):
+    def set_lock(self, snapshot, lock_id, lock_state, parent=False):
         """Adds/removes the given lock from ``snapshot`` and calls
            ``_write_locks`` with the updated locks."""
         if lock_state:
-            snapshot.locks.add(lock_id)
+            if parent:
+                snapshot.parent_locks.add(lock_id)
+            else:
+                snapshot.locks.add(lock_id)
         else:
-            snapshot.locks.discard(lock_id)
+            if parent:
+                snapshot.parent_locks.discard(lock_id)
+            else:
+                snapshot.locks.discard(lock_id)
         lock_dict = {}
         for _snapshot in self.list_snapshots():
+            snap_entry = {}
             if _snapshot.locks:
-                lock_dict[_snapshot.get_name()] = list(_snapshot.locks)
+                snap_entry["locks"] = list(_snapshot.locks)
+            if _snapshot.parent_locks:
+                snap_entry["parent_locks"] = list(_snapshot.parent_locks)
+            if snap_entry:
+                lock_dict[_snapshot.get_name()] = snap_entry
         self._write_locks(lock_dict)
-        logging.debug("Lock state for {} and lock_id {} changed to "
-                      "{}".format(snapshot, lock_id, lock_state))
+        logging.debug("Lock state for {} and lock_id {} changed to {} (parent "
+                      "= {})".format(snapshot, lock_id, lock_state, parent))
 
     def add_snapshot(self, snapshot, rewrite=True):
         """Adds a snapshot to the cache. If ``rewrite`` is set, a new
@@ -154,11 +171,8 @@ class Endpoint:
         # only remove snapshots that have no lock remaining
         to_remove = []
         for snapshot in snapshots:
-            if not snapshot.locks:
+            if not snapshot.locks and not snapshot.parent_locks:
                 to_remove.append(snapshot)
-                # remove existing locks, if any
-                for lock in set(snapshot.locks):
-                    self.set_lock(snapshot, lock, False)
 
         logging.info("Removing {} snapshot(s) from "
                      "{}:".format(len(to_remove), self))
@@ -200,14 +214,14 @@ class Endpoint:
     def __repr__(self):
         return self.path
 
-    def prepare(self):
-        """Is called after endpoint creation. Various endpoint-related
-           checks may be implemented here."""
-        pass
-
     def get_id(self):
         """Return an id string to identify this endpoint over multiple runs."""
         return "unknown://{}".format(self.path)
+
+    def _prepare(self):
+        """Is called after endpoint creation. Various endpoint-related
+           checks may be implemented here."""
+        pass
 
     def _build_snapshot_cmd(self, source, dest, readonly=True):
         """Should return a command which, when executed, creates a

@@ -15,13 +15,13 @@ class SSHEndpoint(Endpoint):
         self.port = port
         self.username = username
         self.ssh_opts = ssh_opts or []
-        self.sshfs_opts = ["auto_unmount", "cache=no", "reconnect"]
+        self.sshfs_opts = ["auto_unmount", "reconnect", "cache=no"]
         if self.source:
             self.source = os.path.normpath(self.source)
             if not self.path.startswith("/"):
                 self.path = os.path.join(self.source, self.path)
         self.path = os.path.normpath(self.path)
-        self.sshfs = False
+        self.sshfs = None
 
     def __repr__(self):
         return "(SSH) {}{}".format(
@@ -35,7 +35,7 @@ class SSHEndpoint(Endpoint):
             s = "{}:{}".format(s, self.port)
         return "ssh://{}{}".format(s, self.path)
 
-    def prepare(self):
+    def _prepare(self):
         # check whether ssh is available
         logging.debug("Checking for ssh ...")
         cmd = ["ssh"]
@@ -64,16 +64,37 @@ class SSHEndpoint(Endpoint):
             cmd += ["-o", opt]
         cmd += ["{}:/".format(self._build_connect_string()), mountpoint]
         try:
-            util.exec_subprocess(cmd, method="call", stdout=subprocess.DEVNULL)
+            util.exec_subprocess(cmd, method="check_call",
+                                 stdout=subprocess.DEVNULL)
         except FileNotFoundError as e:
             logging.debug("  -> got exception: {}".format(e))
             if self.source:
                 # we need that for the locks
-                logging.info("sshfs command is not available")
+                logging.info("  The sshfs command is not available but it is "
+                             "mandatory for sourcing from SSH.")
                 raise util.AbortError()
         else:
             self.sshfs = mountpoint
             logging.debug("  -> sshfs is available")
+
+        # create directories, if needed
+        dirs = []
+        if self.source is not None:
+            dirs.append(self.source)
+        dirs.append(self.path)
+        if self.sshfs:
+            for d in dirs:
+                if not os.path.isdir(self._path2sshfs(d)):
+                    logging.info("Creating directory: {}".format(d))
+                    try:
+                        os.makedirs(self._path2sshfs(d))
+                    except OSError as e:
+                        logging.error("Error creating new location {}: "
+                                      "{}".format(d, e))
+                        raise util.AbortError()
+        else:
+            cmd = ["mkdir", "-p"] + dirs
+            self._exec_cmd(cmd)
 
     def _collapse_cmds(self, cmds, abort_on_failure=True):
         """Concatenates all given commands, ';' is inserted as separator."""

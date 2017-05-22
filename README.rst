@@ -162,8 +162,34 @@ to work. It is recommended to set up public key authentication to
 eliminate the need for entering passwords. A full description of how
 to customize the ``ssh`` call can be found in the help text.
 
-Pulling backups from a remote SSH side is not yet supported. Please push
-until it is.
+Pulling backups from a remote side is now supported as well! Simply use
+the ``ssh://`` scheme as source.
+
+You could even do something like:
+
+::
+
+    $ btrfs-backup ssh://source_server/home ssh://dest_server/mnt/backups
+
+to pull backups from ``source_server`` and store them at
+``dest_server``. This might be used if you can't install btrfs-backup
+on either remote host for any reason. But keep in mind that this procedure
+will generate double traffic (from ``source_server`` to you and from
+you to ``dest_server``).
+
+Okay, just one last example, because I really like that one:
+
+::
+
+    $ btrfs-backup ssh://source_server/home \
+                   /mnt/backups \
+                   ssh://dest_server/mnt/backups
+
+Can you guess what it does? Well, it does the same as the command before +
+an extra sending to your local ``/mnt/backups`` folder. Please note that
+btrfs-backup is not smart enough to prevent the same data from being
+pulled from ``source_server`` twice. But that wouldn't be easy to
+implement with the current design.
 
 
 Help text

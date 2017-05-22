@@ -30,6 +30,7 @@ class Snapshot:
             time_obj = str2date()
         self.time_obj = time_obj
         self.locks = set()
+        self.parent_locks = set()
 
     def __eq__(self, other):
         return self.prefix == other.prefix and self.time_obj == other.time_obj
@@ -136,31 +137,32 @@ def is_subvolume(path):
 
 def read_locks(s):
     """Reads locks from lock file content given as string.
-       Returns ``{'snapname': ['lock', ...], ...}``.
+       Returns ``{'snapname': {'locks': ['lock', ...], ...},
+       'parent_locks': ['lock', ...}``.
        If format is invalid, ``ValueError`` is raised."""
+
     s = s.strip()
-    lock_dict = {}
     if not s:
-        return lock_dict
+        return {}
+
     try:
         content = json.loads(s)
         assert isinstance(content, dict)
-        for snapname, locks in content.items():
-            assert isinstance(snapname, str)
-            assert isinstance(locks, list)
-            if not locks:
-                # ignore empty lock lists
-                continue
-            lock_dict[snapname] = []
-            for lock in locks:
-                assert isinstance(lock, str)
-                if lock not in lock_dict[snapname]:
-                    # don't add multiple identical locks
-                    lock_dict[snapname].append(lock)
+        for snap_name, snap_entry in content.items():
+            assert isinstance(snap_name, str)
+            assert isinstance(snap_entry, dict)
+            for lock_type, locks in dict(snap_entry).items():
+                assert lock_type in ("locks", "parent_locks")
+                assert isinstance(locks, list)
+                for lock in locks:
+                    assert isinstance(lock, str)
+                # eliminate multiple occurances of locks
+                snap_entry[lock_type] = list(set(locks))
     except (AssertionError, json.JSONDecodeError) as e:
         logging.error("Lock file couldn't be parsed: {}".format(e))
         raise ValueError("invalid lock file format")
-    return lock_dict
+
+    return content
 
 def write_locks(lock_dict):
     """Converts ``lock_dict`` back to the string readable by ``read_locks``."""

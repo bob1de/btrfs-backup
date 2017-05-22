@@ -156,6 +156,8 @@ def sync_snapshots(src_endpoint, dest_endpoint, keep_num_backups=0,
             parent = best_snapshot.find_parent(present_snapshots)
             clones = present_snapshots
         src_endpoint.set_lock(best_snapshot, dest_id, True)
+        if parent:
+            src_endpoint.set_lock(parent, dest_id, True, parent=True)
         try:
             send_snapshot(best_snapshot, dest_endpoint, parent=parent,
                           clones=clones, **kwargs)
@@ -164,6 +166,8 @@ def sync_snapshots(src_endpoint, dest_endpoint, keep_num_backups=0,
                          "removed.".format(best_snapshot))
         else:
             src_endpoint.set_lock(best_snapshot, dest_id, False)
+            if parent:
+                src_endpoint.set_lock(parent, dest_id, False, parent=True)
             dest_endpoint.add_snapshot(best_snapshot)
             dest_snapshots = dest_endpoint.list_snapshots()
         to_transfer.remove(best_snapshot)
@@ -172,8 +176,10 @@ def sync_snapshots(src_endpoint, dest_endpoint, keep_num_backups=0,
                                   "complete!".format(dest_endpoint)))
 
 
-def run():
-    # Parse command line arguments
+def run(argv):
+    """Run the program. Items in ``argv`` are treated as command line
+       arguments."""
+
     description = """\
 This provides incremental backups for btrfs filesystems. It can be
 used for taking regular backups of any btrfs subvolume and syncing them
@@ -181,20 +187,21 @@ with local and/or remote locations. Multiple targets are supported as
 well as retention settings for both source snapshots and backups. If
 a snapshot transfer fails for any reason (e.g. due to network outage),
 btrfs-backup will notice it and prevent the snapshot from being deleted
-until it finally maked it over to its destination.
-"""
+until it finally maked it over to its destination."""
+
     epilog = """\
 You may also pass one or more file names prefixed with '@' at the
 command line. Arguments are then read from these files, treating each
-line as an argument (or '--arg value'-style pair) you would normally
+line as a flag or '--arg value'-style pair you would normally
 pass directly. Note that you must not escape whitespaces (or anything
 else) within argument values. Lines starting with '#' are treated
-as comments and silently ignored. Indentation is allowed and has no
-effect. Argument files can be nested, meaning you may include a file
-from another one. When doing so, make sure to not create infinite loops
-by including files mutually. Mixing of direct arguments and argument
-files is allowed as well.
-"""
+as comments and silently ignored. Blank lines and indentation are allowed
+and have no effect. Argument files can be nested, meaning you may include
+a file from another one. When doing so, make sure to not create infinite
+loops by including files mutually. Mixing of direct arguments and argument
+files is allowed as well."""
+
+    # Parse command line arguments
     parser = util.MyArgumentParser(description=description, epilog=epilog,
                                    add_help=False, fromfile_prefix_chars="@",
                                    formatter_class=util.MyHelpFormatter)
@@ -281,8 +288,8 @@ files is allowed as well.
     group = parser.add_argument_group("Deprecated options",
                                       description="These options are available "
                                                   "for backwards compatibility "
-                                                  "only and will be removed in "
-                                                  "future versions. Please "
+                                                  "only and might be removed "
+                                                  "in future releases. Please "
                                                   "stop using them.")
     group.add_argument("--latest-only", action="store_true",
                        help="Shortcut for '--num-snapshots 1'.")
@@ -291,13 +298,18 @@ files is allowed as well.
     group.add_argument("--locked-dests", action="store_true",
                        help="Automatically add all destinations for which "
                             "locks exist at any source snapshot.")
-    group.add_argument("source", help="Subvolume to backup.")
+    group.add_argument("source",
+                       help="N|Subvolume to backup.\n"
+                            "The following schemes are possible:\n"
+                            " - /path/to/subvolume\n"
+                            " - ssh://[user@]host[:port]/path/to/subvolume\n"
+                            "Specifying a source is mandatory.")
     group.add_argument("dest", nargs="*", default=[],
                        help="N|Destination to send backups to.\n"
                             "The following schemes are possible:\n"
                             " - /path/to/backups\n"
-                            " - 'shell://cat > some-file'\n"
                             " - ssh://[user@]host[:port]/path/to/backups\n"
+                            " - 'shell://cat > some-file'\n"
                             "You may use this argument multiple times to "
                             "transfer backups to multiple locations. "
                             "You may even omit it completely in what case "
@@ -306,11 +318,11 @@ files is allowed as well.
                             "snapshotting without backing up.")
 
     try:
-        args = parser.parse_args()
+        args = parser.parse_args(argv)
     except RecursionError as e:
         print("Recursion error while parsing arguments.\n"
               "Maybe you produced a loop in argument files?", file=sys.stderr)
-        sys.exit(1)
+        raise util.AbortError()
 
     # applying shortcuts
     if args.quiet:
@@ -374,10 +386,8 @@ files is allowed as well.
                                                 source=True)
     except ValueError as e:
         logging.error("Couldn't parse source specification: {}".format(e))
-        sys.exit(1)
+        raise util.AbortError()
     logging.debug("Source endpoint: {}".format(src_endpoint))
-
-    logging.info("Preparing endpoint {} ...".format(src_endpoint))
     src_endpoint.prepare()
 
     # add endpoint creation strings for locked destinations, if desired
@@ -408,11 +418,9 @@ files is allowed as well.
             except ValueError as e:
                 logging.error("Couldn't parse destination specification: "
                               "{}".format(e))
-                sys.exit(1)
+                raise util.AbortError()
             dest_endpoints.append(dest_endpoint)
             logging.debug("Destination endpoint: {}".format(dest_endpoint))
-
-            logging.info("Preparing endpoint {} ...".format(dest_endpoint))
             dest_endpoint.prepare()
 
     if args.no_snapshot:
@@ -461,7 +469,7 @@ files is allowed as well.
 
 def main():
     try:
-        run()
+        run(sys.argv[1:])
     except (util.AbortError, KeyboardInterrupt):
         sys.exit(1)
 
