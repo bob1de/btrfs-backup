@@ -62,7 +62,9 @@ Requirements
 -  Python 3.3 or later
 -  Appropriate btrfs-progs; typically you'll want **at least** 3.12 with
    Linux 3.12/3.13
--  (optional) OpenSSH's ``ssh`` command for remote backup storage
+-  (optional) OpenSSH's ``ssh`` command - needed for remote backup pulling
+   and pushing via SSH
+-  (optional) ``sshfs`` - only needed for pulling via SSH
 -  (optional) ``pv`` command for displaying progress during backups
 
 Install via PIP
