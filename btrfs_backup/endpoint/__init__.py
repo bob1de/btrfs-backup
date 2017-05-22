@@ -32,6 +32,7 @@ def choose_endpoint(spec, common_kwargs=None, source=False,
     if ShellEndpoint not in excluded_types and spec.startswith("shell://"):
         c = ShellEndpoint
         kwargs["cmd"] = spec[8:]
+        kwargs["source"] = True
     elif SSHEndpoint not in excluded_types and spec.startswith("ssh://"):
         c = SSHEndpoint
         parsed = urllib.parse.urlparse(spec)
