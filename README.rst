@@ -59,7 +59,7 @@ Installation
 ------------
 Install via PIP
 ~~~~~~~~~~~~~~~
-The easiest way to get up and running is via PIP. If ``pip3`` is missing
+The easiest way to get up and running with the latest stable version is via PIP. If ``pip3`` is missing
 on your system and you run a Debian-based distribution, simply install
 it via:
 
@@ -72,6 +72,12 @@ Then, you can fetch the latest version of btrfs-backup:
 ::
 
     $ sudo pip3 install btrfs_backup
+
+Pre-built packages
+~~~~~~~~~~~~~~~~~~
+There are pre-built packages available for the following distributions.
+
+- `Arch Linux <https://aur.archlinux.org/packages/python-btrfs-backup>`_ (thanks to XenGi for maintaining this)
 
 Manual installation
 ~~~~~~~~~~~~~~~~~~~
