@@ -255,6 +255,16 @@ files is allowed as well."""
                             "This might be useful when piping to a file for "
                             "storage.")
 
+    group = parser.add_argument_group("SSH related options")
+    group.add_argument("--ssh-opt", action="append", default=[],
+                       help="N|Pass extra ssh_config options to ssh(1).\n"
+                            "Example: '--ssh-opt Cipher=aes256-ctr --ssh-opt "
+                            "IdentityFile=/root/id_rsa'\n"
+                            "would result in 'ssh -o Cipher=aes256-ctr "
+                            "-o IdentityFile=/root/id_rsa'.")
+    group.add_argument("--ssh-sudo", action="store_true",
+                       help="Execute commands with sudo on the remote host.")
+
     group = parser.add_argument_group("Miscellaneous options")
     group.add_argument("-s", "--sync", action="store_true",
                        help="Run 'btrfs subvolume sync' after deleting "
@@ -279,12 +289,6 @@ files is allowed as well."""
                             "shouldn't need to use this flag. If it is "
                             "necessary in a working setup, please consider "
                             "filing a bug.")
-    group.add_argument("--ssh-opt", action="append", default=[],
-                       help="N|Pass extra ssh_config options to ssh(1).\n"
-                            "Example: '--ssh-opt Cipher=aes256-ctr --ssh-opt "
-                            "IdentityFile=/root/id_rsa'\n"
-                            "would result in 'ssh -o Cipher=aes256-ctr "
-                            "-o IdentityFile=/root/id_rsa'.")
 
     # for backwards compatibility only
     group = parser.add_argument_group("Deprecated options",
@@ -362,13 +366,14 @@ files is allowed as well."""
                   "{}".format(snapprefix if snapprefix else None))
     logging.debug("Don't transfer snapshots: {}".format(args.no_transfer))
     logging.debug("Don't send incrementally: {}".format(args.no_incremental))
+    logging.debug("Extra SSH config options: {}".format(args.ssh_opt))
+    logging.debug("Use sudo at SSH remote host: {}".format(args.ssh_sudo))
     logging.debug("Run 'btrfs subvolume sync' afterwards: {}".format(args.sync))
     logging.debug("Convert subvolumes to read-write before deletion: "
                   "{}".format(args.convert_rw))
     logging.debug("Remove locks for given destinations: "
                   "{}".format(args.remove_locks))
     logging.debug("Skip filesystem checks: {}".format(args.skip_fs_checks))
-    logging.debug("Extra SSH config options: {}".format(args.ssh_opt))
     logging.debug("Auto add locked destinations: {}".format(args.locked_dests))
 
     # kwargs that are common between all endpoints
@@ -377,7 +382,8 @@ files is allowed as well."""
                        "subvolume_sync": args.sync,
                        "btrfs_debug": args.btrfs_debug,
                        "fs_checks": not args.skip_fs_checks,
-                       "ssh_opts": args.ssh_opt}
+                       "ssh_opts": args.ssh_opt,
+                       "ssh_sudo": args.ssh_sudo}
 
     logging.debug("Source: {}".format(args.source))
     src_endpoint_kwargs = dict(endpoint_kwargs)

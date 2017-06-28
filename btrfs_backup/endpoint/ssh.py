@@ -9,13 +9,15 @@ from .common import Endpoint
 
 class SSHEndpoint(Endpoint):
     def __init__(self, hostname, port=None, username=None, ssh_opts=None,
-                 **kwargs):
+                 ssh_sudo=False, **kwargs):
         super(SSHEndpoint, self).__init__(**kwargs)
         self.hostname = hostname
         self.port = port
         self.username = username
         self.ssh_opts = ssh_opts or []
-        self.sshfs_opts = ["auto_unmount", "reconnect", "cache=no"]
+        self.sshfs_opts = self.ssh_opts
+        self.sshfs_opts += ["auto_unmount", "reconnect", "cache=no"]
+        self.ssh_sudo = ssh_sudo
         if self.source:
             self.source = os.path.normpath(self.source)
             if not self.path.startswith("/"):
@@ -60,7 +62,7 @@ class SSHEndpoint(Endpoint):
         cmd = ["sshfs"]
         if self.port:
             cmd += ["-p", str(self.port)]
-        for opt in self.ssh_opts + self.sshfs_opts:
+        for opt in self.sshfs_opts:
             cmd += ["-o", opt]
         cmd += ["{}:/".format(self._build_connect_string()), mountpoint]
         try:
@@ -117,6 +119,8 @@ class SSHEndpoint(Endpoint):
         for opt in self.ssh_opts:
             cmd += ["-o", opt]
         cmd += [self._build_connect_string()]
+        if self.ssh_sudo:
+            cmd += ["sudo"]
         cmd.extend(orig_cmd)
 
         return util.exec_subprocess(cmd, **kwargs)
