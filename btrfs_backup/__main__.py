@@ -38,6 +38,12 @@ from . import endpoint
 
 def send_snapshot(snapshot, dest_endpoint, parent=None, clones=None,
                   no_progress=False):
+    """
+    Sends snapshot to destination endpoint, using given parent and clones.
+    It connects the pipes of source and destination together and shows
+    progress data using the pv command.
+    """
+
     # Now we need to send the snapshot (incrementally, if possible)
     logging.info("Sending {} ...".format(snapshot))
     if parent:
@@ -88,6 +94,13 @@ def send_snapshot(snapshot, dest_endpoint, parent=None, clones=None,
 
 def sync_snapshots(src_endpoint, dest_endpoint, keep_num_backups=0,
                    no_incremental=False, **kwargs):
+    """
+    Synchronizes snapshots from source to destination. Takes care
+    about locking and deletion of corrupt snapshots from failed transfers.
+    It never transfers snapshots that would anyway be deleted afterwards
+    due to retention policy.
+    """
+
     logging.info(util.log_heading("  To {} ...".format(dest_endpoint)))
 
     src_snapshots = src_endpoint.list_snapshots()
@@ -137,7 +150,7 @@ def sync_snapshots(src_endpoint, dest_endpoint, keep_num_backups=0,
 
     while to_transfer:
         if no_incremental:
-            # just choose the last one
+            # simply choose the last one
             best_snapshot = to_transfer[-1]
             parent = None
             clones = []
@@ -156,7 +169,10 @@ def sync_snapshots(src_endpoint, dest_endpoint, keep_num_backups=0,
                 return -d if d < 0 else d
             best_snapshot = min(to_transfer, key=key)
             parent = best_snapshot.find_parent(present_snapshots)
-            clones = present_snapshots
+            # we don't use clones at the moment, because they don't seem
+            # to speed things up
+            #clones = present_snapshots
+            clones = []
         src_endpoint.set_lock(best_snapshot, dest_id, True)
         if parent:
             src_endpoint.set_lock(parent, dest_id, True, parent=True)
@@ -347,7 +363,7 @@ files is allowed as well."""
     if args.snapshot_folder:
         snapdir = args.snapshot_folder
     else:
-        snapdir = 'snapshot'
+        snapdir = "snapshot"
 
     if args.snapshot_prefix:
         snapprefix = args.snapshot_prefix
@@ -406,30 +422,27 @@ files is allowed as well."""
                     args.dest.append(lock)
 
     if args.remove_locks:
-        logging.info("Removing locks ...")
+        logging.info("Removing locks (--remove-locks) ...")
         for snapshot in src_endpoint.list_snapshots():
             for dest in args.dest:
                 if dest in snapshot.locks:
                     logging.info("  {} ({})".format(snapshot, dest))
                     src_endpoint.set_lock(snapshot, dest, False)
-
-        logging.info("Removing parent locks ...")
-        for snapshot in src_endpoint.list_snapshots():
-            for dest in args.dest:
                 if dest in snapshot.parent_locks:
-                    logging.info("  {} ({})".format(snapshot, dest))
+                    logging.info("  {} ({}) [parent]".format(snapshot, dest))
                     src_endpoint.set_lock(snapshot, dest, False, parent=True)
 
     dest_endpoints = []
     # only create destination endpoints if they are needed
     if args.no_transfer and args.num_backups <= 0:
         logging.debug("Don't creating destination endpoints because they "
-                      "won't be needed.")
+                      "won't be needed (--no-transfer and no --num-backups).")
     else:
         for dest in args.dest:
             logging.debug("Destination: {}".format(dest))
             try:
-                dest_endpoint = endpoint.choose_endpoint(dest, endpoint_kwargs)
+                dest_endpoint = endpoint.choose_endpoint(dest, endpoint_kwargs,
+                                                         source=False)
             except ValueError as e:
                 logging.error("Couldn't parse destination specification: "
                               "{}".format(e))
@@ -439,14 +452,14 @@ files is allowed as well."""
             dest_endpoint.prepare()
 
     if args.no_snapshot:
-        logging.info("Taking no snapshot.")
+        logging.info("Taking no snapshot (--no-snapshot).")
     else:
         # First we need to create a new snapshot on the source disk
         logging.info(util.log_heading("Snapshotting ..."))
         src_endpoint.snapshot()
 
     if args.no_transfer:
-        logging.info(util.log_heading("Don't transferring snapshots."))
+        logging.info(util.log_heading("Not transferring (--no-transfer)."))
     else:
         logging.info(util.log_heading("Transferring ..."))
         for dest_endpoint in dest_endpoints:
