@@ -119,7 +119,9 @@ def sync_snapshots(src_endpoint, dest_endpoint, keep_num_backups=0,
             to_remove.append(dest_snapshot)
     if to_remove:
         dest_endpoint.delete_snapshots(to_remove)
-
+        # refresh list of snapshots at destination to have deleted ones
+        # disappear
+        dest_snapshots = dest_endpoint.list_snapshots()
     # now that deletion worked, remove all locks for this destination
     for snapshot in src_snapshots:
         if dest_id in snapshot.locks:
@@ -133,12 +135,7 @@ def sync_snapshots(src_endpoint, dest_endpoint, keep_num_backups=0,
         # it wouldn't make sense to transfer snapshots that would be deleted
         # afterwards anyway
         to_consider = to_consider[-keep_num_backups:]
-
-    to_transfer = []
-    for snapshot in to_consider:
-        if snapshot not in dest_snapshots or dest_id in snapshot.locks:
-            # not yet transferred or previously failed
-            to_transfer.append(snapshot)
+    to_transfer = [snap for snap in to_consider if snap not in dest_snapshots]
 
     if not to_transfer:
         logging.info("No snapshots need to be transferred.")
