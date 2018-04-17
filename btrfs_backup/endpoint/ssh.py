@@ -1,7 +1,8 @@
+import copy
+import logging
 import os
 import subprocess
 import tempfile
-import logging
 
 from .. import util
 from .common import Endpoint
@@ -15,7 +16,7 @@ class SSHEndpoint(Endpoint):
         self.port = port
         self.username = username
         self.ssh_opts = ssh_opts or []
-        self.sshfs_opts = self.ssh_opts
+        self.sshfs_opts = copy.deepcopy(self.ssh_opts)
         self.sshfs_opts += ["auto_unmount", "reconnect", "cache=no"]
         self.ssh_sudo = ssh_sudo
         if self.source:
