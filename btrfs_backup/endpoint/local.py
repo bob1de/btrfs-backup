@@ -10,7 +10,7 @@ class LocalEndpoint(Endpoint):
         super(LocalEndpoint, self).__init__(**kwargs)
         if self.source:
             self.source = os.path.realpath(self.source)
-            if not self.path.startswith("/"):
+            if not os.path.isabs(self.path):
                 self.path = os.path.join(self.source, self.path)
         self.path = os.path.realpath(self.path)
 
