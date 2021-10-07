@@ -127,20 +127,14 @@ class SSHEndpoint(Endpoint):
         return util.exec_subprocess(cmd, **kwargs)
 
     def _listdir(self, location):
-        """Operates remotely via 'ls -1a'. '.' and '..' are excluded from
-           the result."""
+        """Operates remotely via 'ls -1A'."""
 
         if self.sshfs:
             items = os.listdir(self._path2sshfs(location))
         else:
-            cmd = ["ls", "-1a", location]
+            cmd = ["ls", "-1A", location]
             output = self._exec_cmd(cmd, universal_newlines=True)
-            items = []
-            for item in output.splitlines():
-                # remove . and ..
-                if item not in (".", ".."):
-                    items.append(item)
-
+            items = output.splitlines()
         return items
 
     def _get_lock_file_path(self):

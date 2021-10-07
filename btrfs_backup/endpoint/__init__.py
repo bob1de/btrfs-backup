@@ -7,7 +7,7 @@ from .shell import ShellEndpoint
 
 
 def choose_endpoint(spec, common_kwargs=None, source=False,
-                    excluded_types=None):
+                    excluded_types=()):
     """Chooses a suitable endpoint based on the specification given.
        If ``common_kwargs`` is given, it should be a dictionary with
        keyword arguments that all endpoint types should be initialized
@@ -18,15 +18,13 @@ def choose_endpoint(spec, common_kwargs=None, source=False,
        should be present in ``common_kwargs`` in this case.
        The endpoint classes specified in ``excluded_types`` are excluded
        from the consideration.
-       It will return a instance of the proper ``Endpoint`` sub-class.
+       It will return an instance of the proper ``Endpoint`` sub-class.
        If no endpoint can be determined for the given specification,
        a ``ValueError`` is raised."""
 
     kwargs = {}
     if common_kwargs:
         kwargs.update(common_kwargs)
-    if not excluded_types:
-        excluded_types = []
 
     # parse destination string
     if ShellEndpoint not in excluded_types and spec.startswith("shell://"):
@@ -44,6 +42,7 @@ def choose_endpoint(spec, common_kwargs=None, source=False,
             # invalid literal for int ...
             kwargs["port"] = None
         path = parsed.path.strip() or "/"
+        # This is no URL, so an eventual query part must be appended to path
         if parsed.query:
             path += "?" + parsed.query
         path = os.path.normpath(path)
