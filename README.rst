@@ -1,5 +1,6 @@
 btrfs-backup
 ============
+
 This project supports incremental backups for *btrfs* using *snapshots*
 and *send/receive* between filesystems. Think of it as a basic version
 of Time Machine.
@@ -390,14 +391,14 @@ snapshot can be done entirely with btrfs tools:
 
 ::
 
-    $ btrfs send /backup/root/YYMMDD-HHMMSS | btrfs receive /snapshot/home
-    $ btrfs send /backup/home/YYMMDD-HHMMSS | btrfs receive /snapshot/root
+    $ btrfs send /backup/root/YYMMDD-HHMMSS | btrfs receive /snapshot/root
+    $ btrfs send /backup/home/YYMMDD-HHMMSS | btrfs receive /snapshot/home
     $ mv /active/root /inactive
     $ mv /active/home /inactive
     $ btrfs subvolume snapshot /snapshot/root/YYMMDD-HHMMSS /active/root
     $ btrfs subvolume snapshot /snapshot/home/YYMMDD-HHMMSS /active/home
 
-The snapshots from btrfs-backup may be placed in ``/snapshots/`` by
+The snapshots from btrfs-backup may be placed in ``/snapshots`` by
 using the ``--snapshot-folder`` option.
 
 
