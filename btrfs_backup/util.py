@@ -113,7 +113,13 @@ def is_btrfs(path):
         except ValueError as e:
             logging.debug("  Couldn't split line, skipping: {}".format(line))
             continue
-        if path.startswith(mountpoint) and len(mountpoint) > len(best_match):
+        mountpoint_prefix = mountpoint
+        if not mountpoint_prefix.endswith(os.sep):
+            mountpoint_prefix += os.sep
+        if (
+            (path == mountpoint or path.startswith(mountpoint_prefix))
+            and len(mountpoint) > len(best_match)
+        ):
             best_match = mountpoint
             best_match_fstype = fstype
             logging.debug("  New best_match with fstype {}: "
